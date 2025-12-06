@@ -33,15 +33,15 @@ public class ParameterSenderService : BackgroundService
         { "LeftEyeX", "/LeftEyeX" },
         { "LeftEyeY", "/LeftEyeY" },
         { "LeftEyeLid", "/LeftEyeLid" },
-        { "LeftEyeWiden", "/LeftEyeWiden" },
-        // { "LeftEyeLower", "/LeftEyeLower" },
-        { "LeftEyeBrow", "/LeftEyeBrow" },
+        //{ "LeftEyeWiden", "/LeftEyeWiden" },
+        //{ "LeftEyeLower", "/LeftEyeLower" },
+        //{ "LeftEyeBrow", "/LeftEyeBrow" },
         { "RightEyeX", "/RightEyeX" },
         { "RightEyeY", "/RightEyeY" },
         { "RightEyeLid", "/RightEyeLid" },
-        { "RightEyeWiden", "/RightEyeWiden" },
-        // { "RightEyeLower", "/RightEyeLower" },
-        { "RightEyeBrow", "/RightEyeBrow" },
+        //{ "RightEyeWiden", "/RightEyeWiden" },
+        //{ "RightEyeLower", "/RightEyeLower" },
+        //{ "RightEyeBrow", "/RightEyeBrow" },
     };
 
     public readonly Dictionary<string, string> FaceExpressionMap = new()
@@ -169,9 +169,9 @@ public class ParameterSenderService : BackgroundService
         var leftEyeX = expressions[0];
         var leftEyeY = expressions[1];
         var leftEyeLid = expressions[2];
-        var rightEyeX = expressions[3];
-        var rightEyeY = expressions[4];
-        var rightEyeLid = expressions[5];
+        var rightEyeX = expressions[5];
+        var rightEyeY = expressions[6];
+        var rightEyeLid = expressions[7];
 
         var leftEyeLidSettings = _calibrationService.GetExpressionSettings("LeftEyeLid");
         var rightEyeLidSettings = _calibrationService.GetExpressionSettings("RightEyeLid");
