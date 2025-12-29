@@ -441,7 +441,7 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
 
     private void Initialize()
     {
-        bool hasRead = _localSettings.ReadSetting<bool>("SecondsWarningRead");
+        var hasRead = _localSettings.ReadSetting<bool>("EyeDataOptInRead");
         if (!hasRead)
         {
             _dropOverlayService.Show();
