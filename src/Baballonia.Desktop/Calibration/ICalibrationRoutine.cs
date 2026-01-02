@@ -417,7 +417,7 @@ public class EyeCalibration
         List<ICalibrationStep> steps =
         [
             new BaseTutorialStep("gazetutorialshort", TimeSpan.FromSeconds(5)),
-            new GazeCaptureStep(_eyePipelineEventBus, TimeSpan.FromSeconds(10)),
+            new GazeCaptureStep(_eyePipelineEventBus),
             new BaseTutorialStep("blinktutorial", TimeSpan.FromSeconds(4)),
             _eyeCaptureStepFactory.Create("blink",
                 CaptureFlags.FLAG_GOOD_DATA |
