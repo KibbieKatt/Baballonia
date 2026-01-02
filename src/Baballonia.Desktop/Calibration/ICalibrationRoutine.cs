@@ -376,28 +376,19 @@ public class MergeBinsStep : ICalibrationStep
     }
 }
 
-public class EyeCalibration
+public class EyeCalibration(
+    EyeCaptureStepFactory eyeCaptureStepFactory,
+    ITrainerService trainer,
+    IEyePipelineEventBus eyePipelineEventBus)
 {
-    private readonly EyeCaptureStepFactory _eyeCaptureStepFactory;
-    private readonly ITrainerService _trainer;
-    private readonly IEyePipelineEventBus _eyePipelineEventBus;
-
-    public EyeCalibration(EyeCaptureStepFactory eyeCaptureStepFactory, ITrainerService trainer,
-        IEyePipelineEventBus eyePipelineEventBus)
-    {
-        _eyeCaptureStepFactory = eyeCaptureStepFactory;
-        _trainer = trainer;
-        _eyePipelineEventBus = eyePipelineEventBus;
-    }
-
     public IEnumerable<ICalibrationStep> BasicAllCalibration()
     {
         List<ICalibrationStep> steps =
         [
             new BaseTutorialStep("gazetutorial"),
-            new GazeCaptureStep(_eyePipelineEventBus),
+            new GazeCaptureStep(eyePipelineEventBus),
             new BaseTutorialStep("blinktutorial", TimeSpan.FromSeconds(10)),
-            _eyeCaptureStepFactory.Create("blink",
+            eyeCaptureStepFactory.Create("blink",
                 CaptureFlags.FLAG_GOOD_DATA |
                 CaptureFlags.FLAG_IN_MOVEMENT |
                 CaptureFlags.FLAG_VERSION_BIT1,
@@ -405,21 +396,22 @@ public class EyeCalibration
             ),
 
             new MergeBinsStep("gaze.bin", "blink.bin"),
-            new TrainerCalibrationStep(_trainer),
+            new TrainerCalibrationStep(trainer),
             new CommandDispatchStep("close")
 
         ];
 
         return steps;
     }
+
     public IEnumerable<ICalibrationStep> BasicAllCalibrationQuick()
     {
         List<ICalibrationStep> steps =
         [
             new BaseTutorialStep("gazetutorialshort", TimeSpan.FromSeconds(5)),
-            new GazeCaptureStep(_eyePipelineEventBus),
+            new GazeCaptureStep(eyePipelineEventBus),
             new BaseTutorialStep("blinktutorial", TimeSpan.FromSeconds(4)),
-            _eyeCaptureStepFactory.Create("blink",
+            eyeCaptureStepFactory.Create("blink",
                 CaptureFlags.FLAG_GOOD_DATA |
                 CaptureFlags.FLAG_IN_MOVEMENT |
                 CaptureFlags.FLAG_VERSION_BIT1 |
@@ -428,7 +420,45 @@ public class EyeCalibration
             ),
 
             new MergeBinsStep("gaze.bin", "blink.bin"),
-            new TrainerCalibrationStep(_trainer),
+            new TrainerCalibrationStep(trainer),
+            new CommandDispatchStep("close")
+
+        ];
+
+        return steps;
+    }
+
+    public IEnumerable<ICalibrationStep> GazeCalibration()
+    {
+        List<ICalibrationStep> steps =
+        [
+            new BaseTutorialStep("gazetutorialshort", TimeSpan.FromSeconds(5)),
+            new GazeCaptureStep(eyePipelineEventBus),
+
+            new MergeBinsStep("gaze.bin", "blink.bin"),
+            new TrainerCalibrationStep(trainer),
+            new CommandDispatchStep("close")
+
+        ];
+
+        return steps;
+    }
+
+    public IEnumerable<ICalibrationStep> BlinkCalibration()
+    {
+        List<ICalibrationStep> steps =
+        [
+            new BaseTutorialStep("blinktutorial", TimeSpan.FromSeconds(4)),
+            eyeCaptureStepFactory.Create("blink",
+                CaptureFlags.FLAG_GOOD_DATA |
+                CaptureFlags.FLAG_IN_MOVEMENT |
+                CaptureFlags.FLAG_VERSION_BIT1 |
+                CaptureFlags.FLAG_ROUTINE_BIT1,
+                TimeSpan.FromSeconds(20)
+            ),
+
+            new MergeBinsStep("gaze.bin", "blink.bin"),
+            new TrainerCalibrationStep(trainer),
             new CommandDispatchStep("close")
 
         ];
