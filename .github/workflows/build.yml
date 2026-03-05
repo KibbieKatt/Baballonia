@@ -26,6 +26,10 @@ on:
         description: 'Publish on Steam'
         type: boolean
         default: false
+      publish-winget:
+        description: 'Publish on WinGet'
+        type: boolean
+        default: false
 
 jobs:
   build-linux:
@@ -192,6 +196,31 @@ jobs:
           prerelease: ${{ github.event.inputs.publish-pre-release }}
           body: ${{ steps.release-body.outputs.body }}
           generate_release_notes: ${{ steps.release-body.outputs.generate_notes }}
+
+  publish-winget:
+    needs: [publish-release]
+    if: ${{ github.event.inputs.publish-winget == 'true' && github.event.inputs.publish-release == 'true' }}
+    defaults:
+      run:
+        shell: bash
+
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Validate version number exists
+        run: |
+          if [ -z "${{ github.event.inputs.version-number }}" ]; then
+            exit 1
+          fi
+
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: dfgHiatus.Baballonia
+          version: ${{ github.event.inputs.version-number }}
+          release-tag: ${{ github.event.inputs.version-number }}
+          installers-regex: '\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
 
   publish-steam:
     needs: [build-linux, build-windows-x64]
