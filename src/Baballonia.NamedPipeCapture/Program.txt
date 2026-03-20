@@ -1,0 +1,295 @@
+// =============================================================================
+// Program.cs — Named Pipe Capture test console app
+//
+// Usage (two terminals):
+//
+//   Terminal 1 (writer / simulator):
+//     dotnet run -- write <pipeName> <width> <height> [fps]
+//     e.g.  dotnet run -- write testpipe 640 480 30
+//
+//   Terminal 2 (reader / capture):
+//     dotnet run -- read <pipeName>
+//     e.g.  dotnet run -- read testpipe
+//
+// The writer generates solid-colour BGR frames and sends them over the pipe.
+// The reader uses NamedPipeCaptureFactory + NamedPipeCapture to consume them,
+// prints FPS statistics, and (optionally) shows each frame with OpenCvSharp.
+// =============================================================================
+
+using System.IO.Pipes;
+using Baballonia.SDK;
+using Microsoft.Extensions.Logging;
+using OpenCvSharp;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
+
+// ---------------------------------------------------------------------------
+// Bootstrap logging
+// ---------------------------------------------------------------------------
+using ILoggerFactory loggerFactory = LoggerFactory.Create(b =>
+    b.AddSimpleConsole(o =>
+    {
+        o.SingleLine = true;
+        o.TimestampFormat = "HH:mm:ss.fff ";
+    }).SetMinimumLevel(LogLevel.Debug));
+
+ILogger appLog = loggerFactory.CreateLogger("App");
+
+// ---------------------------------------------------------------------------
+// Argument parsing
+// ---------------------------------------------------------------------------
+if (args.Length < 2)
+{
+    Console.WriteLine("Usage:");
+    Console.WriteLine("  read  <pipeName>");
+    Console.WriteLine("  write <pipeName> <width> <height> [fps]");
+    return 1;
+}
+
+string mode     = args[0].ToLowerInvariant();
+string pipeName = args[1];
+
+return mode switch
+{
+    "read"  => await RunReaderAsync(pipeName),
+    "write" => await RunWriterAsync(args),
+    _       => PrintUsageError(mode)
+};
+
+// ---------------------------------------------------------------------------
+// READER — exercises NamedPipeCaptureFactory and NamedPipeCapture
+// ---------------------------------------------------------------------------
+async Task<int> RunReaderAsync(string name)
+{
+    appLog.LogInformation("=== READER mode, pipe '{Name}' ===", name);
+
+    var factory = new NamedPipeCaptureFactory(
+        loggerFactory.CreateLogger<NamedPipeCapture>());
+
+    if (!factory.CanConnect($"pipe://{name}"))
+    {
+        appLog.LogError("Factory says it cannot connect to pipe://{Name}", name);
+        return 1;
+    }
+
+    using Capture capture = factory.Create($"pipe://{name}");
+
+    appLog.LogInformation("Starting capture…");
+    bool started = await capture.StartCapture();
+    if (!started)
+    {
+        appLog.LogError("StartCapture() returned false. Is the writer running?");
+        return 1;
+    }
+
+    // -----------------------------------------------------------------------
+    // Poll for frames until Ctrl-C
+    // -----------------------------------------------------------------------
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        cts.Cancel();
+        appLog.LogInformation("Ctrl-C received — shutting down.");
+    };
+
+    long frameCount = 0;
+    var  sw         = System.Diagnostics.Stopwatch.StartNew();
+    var  fpsTimer   = System.Diagnostics.Stopwatch.StartNew();
+    long fpsFrames  = 0;
+
+    appLog.LogInformation("Reading frames. Press Ctrl-C to stop.");
+
+    while (!cts.Token.IsCancellationRequested)
+    {
+        Mat? frame = capture.AcquireRawMat();
+
+        if (frame is null)
+        {
+            // No frame yet — yield briefly to avoid busy-spin
+            await Task.Delay(1, cts.Token).ContinueWith(_ => { });
+            continue;
+        }
+
+        using (frame) // we own it now; dispose after use
+        {
+            frameCount++;
+            fpsFrames++;
+
+            if (fpsTimer.Elapsed.TotalSeconds >= 2.0)
+            {
+                double fps = fpsFrames / fpsTimer.Elapsed.TotalSeconds;
+                appLog.LogInformation(
+                    "Frame #{Count} | {W}x{H} | {Fps:F1} FPS",
+                    frameCount, frame.Width, frame.Height, fps);
+                fpsFrames = 0;
+                fpsTimer.Restart();
+            }
+
+            // Optional: show frame in a window when running with a display
+            // Comment out in headless environments.
+            if (IsDisplayAvailable())
+            {
+                Cv2.ImShow($"pipe://{name}", frame);
+                if (Cv2.WaitKey(1) == 27) // ESC
+                {
+                    appLog.LogInformation("ESC pressed — stopping.");
+                    break;
+                }
+            }
+        }
+
+        // If the capture source became unready the pipe disconnected
+        if (!capture.IsReady)
+        {
+            appLog.LogWarning("Capture source is no longer ready — writer disconnected?");
+            break;
+        }
+    }
+
+    appLog.LogInformation(
+        "Total frames received: {Count} in {Elapsed:F1}s",
+        frameCount, sw.Elapsed.TotalSeconds);
+
+    await capture.StopCapture();
+    Cv2.DestroyAllWindows();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// WRITER — simulates a camera by pushing synthetic BGR frames into the pipe
+// ---------------------------------------------------------------------------
+async Task<int> RunWriterAsync(string[] a)
+{
+    if (a.Length < 4 || !int.TryParse(a[2], out int width) || !int.TryParse(a[3], out int height))
+    {
+        Console.WriteLine("write usage: write <pipeName> <width> <height> [fps]");
+        return 1;
+    }
+
+    int targetFps = a.Length >= 5 && int.TryParse(a[4], out int f) ? f : 30;
+    appLog.LogInformation(
+        "=== WRITER mode, pipe '{Name}', {W}x{H} @ {Fps} FPS ===",
+        pipeName, width, height, targetFps);
+
+    using var server = new NamedPipeServerStream(
+        pipeName,
+        PipeDirection.Out,
+        maxNumberOfServerInstances: 1,
+        transmissionMode: PipeTransmissionMode.Byte,
+        options: PipeOptions.Asynchronous);
+
+    appLog.LogInformation("Waiting for reader to connect…");
+    await server.WaitForConnectionAsync();
+    appLog.LogInformation("Reader connected. Streaming frames. Press Ctrl-C to stop.");
+
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+    double frameDuration = 1000.0 / targetFps;   // ms
+    long   frameIndex    = 0;
+    int    frameBytes    = width * height * 3;
+    byte[] payload       = new byte[frameBytes];
+    byte[] header        = new byte[8];
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+
+    try
+    {
+        while (!cts.Token.IsCancellationRequested)
+        {
+            long startTick = sw.ElapsedMilliseconds;
+
+            // Build a synthetic frame: hue cycles with frame index
+            FillSyntheticBgrFrame(payload, width, height, frameIndex);
+
+            // Write header (big-endian width, height)
+            WriteInt32BigEndian(header, 0, width);
+            WriteInt32BigEndian(header, 4, height);
+
+            await server.WriteAsync(header, cts.Token);
+            await server.WriteAsync(payload, cts.Token);
+            await server.FlushAsync(cts.Token);
+
+            frameIndex++;
+
+            // Simple pacing
+            long elapsed = sw.ElapsedMilliseconds - startTick;
+            int  delay   = (int)(frameDuration - elapsed);
+            if (delay > 0)
+                await Task.Delay(delay, cts.Token);
+        }
+    }
+    catch (OperationCanceledException) { /* normal shutdown */ }
+    catch (IOException ex)
+    {
+        appLog.LogWarning(ex, "Pipe IO error — reader probably disconnected.");
+    }
+
+    appLog.LogInformation("Writer stopped after {Count} frames.", frameIndex);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Fills <paramref name="buffer"/> with a solid BGR colour that shifts hue
+/// as <paramref name="frameIndex"/> advances, creating a cycling colour effect.
+/// </summary>
+static void FillSyntheticBgrFrame(byte[] buffer, int width, int height, long frameIndex)
+{
+    // Convert frame index to an HSV hue (0..179 for OpenCV) and then to BGR
+    double hue       = frameIndex % 180;
+    double saturation = 1.0;
+    double value      = 1.0;
+
+    // HSV → RGB
+    int   hi = (int)(hue / 60.0) % 6;
+    double f = hue / 60.0 - Math.Floor(hue / 60.0);
+    byte  v  = (byte)(value * 255);
+    byte  p  = (byte)(value * (1 - saturation) * 255);
+    byte  q  = (byte)(value * (1 - f * saturation) * 255);
+    byte  t  = (byte)(value * (1 - (1 - f) * saturation) * 255);
+
+    (byte r, byte g, byte b) = hi switch
+    {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+
+    // OpenCV uses BGR order
+    int stride = width * 3;
+    for (int row = 0; row < height; row++)
+    for (int col = 0; col < width;  col++)
+    {
+        int i = row * stride + col * 3;
+        buffer[i]     = b;
+        buffer[i + 1] = g;
+        buffer[i + 2] = r;
+    }
+}
+
+static void WriteInt32BigEndian(byte[] buf, int offset, int value)
+{
+    byte[] bytes = BitConverter.GetBytes(value);
+    if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+    Buffer.BlockCopy(bytes, 0, buf, offset, 4);
+}
+
+static bool IsDisplayAvailable()
+{
+    if (OperatingSystem.IsWindows()) return true;
+    string? display = Environment.GetEnvironmentVariable("DISPLAY");
+    return !string.IsNullOrEmpty(display);
+}
+
+static int PrintUsageError(string badMode)
+{
+    Console.Error.WriteLine($"Unknown mode '{badMode}'. Use 'read' or 'write'.");
+    return 1;
+}

@@ -55,6 +55,7 @@
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\Baballonia.CaptureBin.IO\Baballonia.CaptureBin.IO.csproj" />
+        <ProjectReference Include="..\Baballonia.NamedPipeCapture\Baballonia.NamedPipeCapture.csproj" />
         <ProjectReference Include="..\Baballonia.OpenCVCapture\Baballonia.OpenCVCapture.csproj" />
         <ProjectReference Include="..\Baballonia.SDK\Baballonia.SDK.csproj" />
         <ProjectReference Include="..\Baballonia.SerialCameraCapture\Baballonia.SerialCameraCapture.csproj" />
@@ -146,11 +147,13 @@
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.OpenCVCapture.dll')" Include="$(OutputPath)Baballonia.OpenCVCapture.dll" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.IPCameraCapture.dll')" Include="$(OutputPath)Baballonia.IPCameraCapture.dll" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.VFTCapture.dll')" Include="$(OutputPath)Baballonia.VFTCapture.dll" />
+            <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.NamedPipeCapture.dll')" Include="$(OutputPath)Baballonia.NamedPipeCapture.dll" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.LibV4L2Capture.pdb')" Include="$(OutputPath)Baballonia.LibV4L2Capture.pdb" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.SerialCameraCapture.pdb')" Include="$(OutputPath)Baballonia.SerialCameraCapture.pdb" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.OpenCVCapture.pdb')" Include="$(OutputPath)Baballonia.OpenCVCapture.pdb" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.IPCameraCapture.pdb')" Include="$(OutputPath)Baballonia.IPCameraCapture.pdb" />
             <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.VFTCapture.pdb')" Include="$(OutputPath)Baballonia.VFTCapture.pdb" />
+            <ModuleDlls Condition="Exists('$(OutputPath)Baballonia.NamedPipeCapture.pdb')" Include="$(OutputPath)Baballonia.NamedPipeCapture.pdb" />
         </ItemGroup>
         <Move SourceFiles="@(ModuleDlls)" DestinationFolder="$(OutputPath)Modules\" />
     </Target>
@@ -162,6 +165,7 @@
             <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.IPCameraCapture.dll')" Include="$(OutputPath)\publish\Baballonia.IPCameraCapture.dll" />
             <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.VFTCapture.dll')" Include="$(OutputPath)\publish\Baballonia.VFTCapture.dll" />
             <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.LibV4L2Capture.dll')" Include="$(OutputPath)\publish\Baballonia.LibV4L2Capture.dll" />
+            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.NamedPipeCapture.dll')" Include="$(OutputPath)\publish\Baballonia.NamedPipeCapture.dll" />
         </ItemGroup>
         <Move SourceFiles="@(PublishModuleDlls)" DestinationFolder="$(OutputPath)\publish\Modules\" />
     </Target>
