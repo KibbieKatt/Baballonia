@@ -45,10 +45,9 @@
         <!-- Linux-specific -->
         <PackageReference Include="Project-Babble.OpenCvSharp4.mini.runtime.ubuntu.22.04-x64" Version="4.11.0.1" Condition="$([MSBuild]::IsOSPlatform('Linux')) And
              !($([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().Contains('Arm')))" />
-
         <PackageReference Include="Project-Babble.OpenCvSharp4.mini.runtime.ubuntu.22.04-arm64" Version="4.11.0.1" Condition="$([MSBuild]::IsOSPlatform('Linux')) And
              $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().Contains('Arm'))" />
-	    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+	    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.22.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
         <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
         <PackageReference Include="Xaml.Behaviors.Interactions.Draggable" Version="11.3.9.5" />
         <ProjectReference Include="..\Baballonia.LibV4L2Capture\Baballonia.LibV4L2Capture.csproj" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />

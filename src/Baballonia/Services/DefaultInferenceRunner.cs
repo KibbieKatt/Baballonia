@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 
 namespace Baballonia.Services;
 
@@ -31,11 +32,12 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
         if (!File.Exists(modelPath))
             throw new FileNotFoundException($"{modelPath} does not exist");
 
-        _logger = loggerFactory.CreateLogger(this.GetType().Name + "." + Path.GetFileName(modelPath));
+        var modelName = Path.GetFileName(modelPath);
+        _logger = loggerFactory.CreateLogger(GetType().Name + "." + modelName);
 
         SessionOptions sessionOptions = SetupSessionOptions();
         if (useGpu)
-            ConfigurePlatformSpecificGpu(sessionOptions, modelPath);
+            ConfigurePlatformSpecificGpu(sessionOptions, modelName);
         else
             sessionOptions.AppendExecutionProvider_CPU();
 
@@ -56,7 +58,7 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
     /// </summary>
     private void InitializeModelMetadata()
     {
-        _isOldEyeModel = _session.ModelMetadata.CustomMetadataMap.Count() == 0;
+        _isOldEyeModel = _session.ModelMetadata.CustomMetadataMap.Count == 0;
 
         if (!_isOldEyeModel)
         {
@@ -98,7 +100,7 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
         if (OperatingSystem.IsWindows())
         {
             // If DirectML is supported on the user's system, try using it first.
-            // This has support for both AMD and Nvidia GPUs, and uses less memory in my testing
+            // This has support for both AMD and Nvidia GPUs, and generally works OOB without any weird setup
             try
             {
                 sessionOptions.AppendExecutionProvider_DML();
@@ -107,13 +109,33 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
             }
             catch (Exception)
             {
-                _logger.LogWarning("Failed to create DML Execution Provider on Windows. Falling back to CUDA...");
+                _logger.LogInformation("Failed to create DML Execution Provider on Windows. Falling back to CUDA...");
+            }
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                // MiGraphX is the successor to ROCm, and is available only on Linux,
+                // you'll need to install it per your distro's package manager instructions.
+                // Everytime we load a model we'll hitch, but *works*
+                // https://onnxruntime.ai/docs/execution-providers/MIGraphX-ExecutionProvider.html
+                // For some reason we can't load/save compiled graphs!?
+                sessionOptions.AppendExecutionProvider_MIGraphX();
+                _logger.LogInformation("Initialized ExecutionProvider: MIGraphX for {ModelName}", modelName);
+                return;
+            }
+            catch (Exception)
+            {
+                _logger.LogInformation("Failed to create MIGraphX Execution Provider.");
             }
         }
 
         // If the user's system does not support DirectML (for whatever reason,
         // it's shipped with Windows 10, version 1903(10.0; Build 18362)+
-        // Fallback on good ol' CUDA
+        // or MiGraphX, try CUDA. This requires manual setup, see:
+        // https://github.com/Project-Babble/Baballonia/pull/247
         try
         {
             sessionOptions.AppendExecutionProvider_CUDA();
@@ -122,20 +144,7 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
         }
         catch (Exception)
         {
-            _logger.LogWarning("Failed to create CUDA Execution Provider.");
-        }
-
-        // And, if CUDA fails (or we have an AMD card)
-        // Try one more time with MiGraphX
-        try
-        {
-            sessionOptions.AppendExecutionProvider_MIGraphX();
-            _logger.LogInformation("Initialized ExecutionProvider: MIGraphX for {ModelName}", modelName);
-            return;
-        }
-        catch (Exception)
-        {
-            _logger.LogWarning("Failed to create MIGraphX Execution Provider.");
+            _logger.LogInformation("Failed to create CUDA Execution Provider.");
         }
 
         // Finally, try OpenVINO (for Intel CPUs/GPUs)
@@ -147,10 +156,10 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
         }
         catch (Exception)
         {
-            _logger.LogWarning("Failed to create OpenVINO Execution Provider.");
+            _logger.LogInformation("Failed to create OpenVINO Execution Provider.");
         }
 
-        _logger.LogWarning("No GPU acceleration will be applied.");
+        _logger.LogInformation("No GPU acceleration will be applied.");
         sessionOptions.AppendExecutionProvider_CPU();
     }
 
