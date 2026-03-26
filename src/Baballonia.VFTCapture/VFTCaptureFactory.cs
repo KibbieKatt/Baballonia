@@ -20,16 +20,13 @@ public class VFTCaptureFactory(ILoggerFactory loggerFactory) : ICaptureFactory
 
     public bool CanConnect(string address)
     {
+        // address will be either the device's friendly name, or its numerical index 0, 1, 2...
         var lowered = address.ToLower();
 
-        if (OperatingSystem.IsWindows())
-        {
-            return !lowered.StartsWith("com");
-        }
-        else if (OperatingSystem.IsLinux())
-        {
-            return lowered.StartsWith("/dev/video");
-        }
+        // Hack - prevent VFTCapture from opening Babble trackers
+        if (lowered == "openiristracker") return false;
+        else if (OperatingSystem.IsWindows()) return !lowered.StartsWith("com");
+        else if (OperatingSystem.IsLinux()) return lowered.StartsWith("/dev/video");
 
         return false;
     }
