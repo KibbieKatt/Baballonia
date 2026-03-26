@@ -50,11 +50,15 @@ Alternatively, Baballonia also supports [VRC Native Eyelook](https://docs.vrchat
 
 While this doesn't support lower face tracking, it supports (almost) all VRChat Avatars.
 
-### Resonite / ChilloutVR
+### Resonite 
 
-Existing mods should be compatible with Baballonia's lower face tracking.
+Resonite works natively with Baballonia's eye and face tracking - no external tools necessary!
 
-*For more game information, refer to our [games documentation page](https://docs.babble.diy/docs/software/integrations).*
+### ChilloutVR
+
+ChilloutVR has a mod-based integration for Baballonia's eye and face tracking. Please refer to our docs (below) for installation.
+
+*For more game information and setup, refer to our [games documentation page](https://docs.babble.diy/docs/software/integrations).*
 
 ## Supported Hardware
 
