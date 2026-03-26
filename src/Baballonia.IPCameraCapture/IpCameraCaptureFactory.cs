@@ -23,8 +23,5 @@ public class IpCameraCaptureFactory : ICaptureFactory
         return Uri.TryCreate(address, UriKind.RelativeOrAbsolute, out _) && address.StartsWith("http://");
     }
 
-    public string GetProviderName()
-    {
-        return nameof(IpCameraCapture);
-    }
+    public string GetProviderName() => "Wireless/IP Camera";
 }

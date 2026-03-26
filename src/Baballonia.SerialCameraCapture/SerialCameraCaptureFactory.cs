@@ -26,8 +26,5 @@ public class SerialCameraCaptureFactory : ICaptureFactory
                lowered.StartsWith("/dev/ttyacm");
     }
 
-    public string GetProviderName()
-    {
-        return nameof(SerialCameraCapture);
-    }
+    public string GetProviderName() => "Serial Camera";
 }

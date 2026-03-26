@@ -31,5 +31,5 @@ public class VFTCaptureFactory(ILoggerFactory loggerFactory) : ICaptureFactory
         return false;
     }
 
-    public string GetProviderName() => nameof(VFTCapture);
+    public string GetProviderName() => "Vive Facial Tracker";
 }
