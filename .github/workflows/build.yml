@@ -199,7 +199,7 @@ jobs:
 
   publish-winget:
     needs: [publish-release]
-    if: ${{ github.event.inputs.publish-winget == 'true' && github.event.inputs.publish-release == 'true' }}
+    if: ${{ github.event.inputs.publish-winget == 'true' }}
     defaults:
       run:
         shell: bash
