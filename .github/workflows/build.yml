@@ -101,6 +101,11 @@ jobs:
           cd src/Baballonia.Desktop
           makensis -DWORKFLOW_VERSION="${{ github.event.inputs.version-number }}" main.nsi
 
+      - name: Build VRCFT module
+        run: |
+          cd src/VRCFaceTracking.Baballonia
+          dotnet build -c Release
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -112,6 +117,12 @@ jobs:
         with:
           name: "Baballonia.win.tar.xz"
           path: "src/Baballonia.Desktop/bin/Baballonia.win.tar.xz"
+
+      - name: Upload VRCFT module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "VRCFaceTracking.Baballonia.zip"
+          path: "src/VRCFaceTracking.Baballonia/bin/Release/net10.0/VRCFaceTracking.Baballonia.zip"
 
   publish-release:
     needs: [build-linux, build-windows-x64]
