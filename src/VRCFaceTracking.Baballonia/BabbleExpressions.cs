@@ -1,5 +1,7 @@
 ﻿using VRCFaceTracking.Core.Params.Expressions;
 
+using System.Linq;
+
 namespace VRCFaceTracking.Baballonia;
 
 public static class BabbleExpressions
@@ -282,4 +284,12 @@ public static class BabbleExpressions
             0f
         }
     };
+
+    public static readonly IReadOnlyDictionary<string, UnifiedExpressions[]> AddressToExpressions =
+        Enumerable.Range(0, BabbleExpressionMap.Count)
+            .Select(i => BabbleExpressionMap.ElementAt(i))
+            .GroupBy(entry => entry.Item2)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(entry => entry.Item1).Distinct().ToArray());
 }
