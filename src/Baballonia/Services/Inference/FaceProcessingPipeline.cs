@@ -1,5 +1,6 @@
 ﻿using Baballonia.Services.events;
 using Baballonia.Services.Inference.Enums;
+using OpenCvSharp;
 using System;
 
 namespace Baballonia.Services.Inference;
@@ -17,36 +18,45 @@ public class FaceProcessingPipeline : DefaultProcessingPipeline
 
     public float[]? RunUpdate()
     {
-        var frame = VideoSource?.GetFrame(ColorType.Gray8);
-        if(frame == null)
-            return null;
+        Mat? frame = null;
+        Mat? transformed = null;
 
-        _facePipelineEventBus.Publish(new FacePipelineEvents.NewFrameEvent(frame));
+        try
+        {
+            frame = VideoSource?.GetFrame(ColorType.Gray8);
+            if (frame == null)
+                return null;
 
-        var transformed = ImageTransformer?.Apply(frame);
+            _facePipelineEventBus.Publish(new FacePipelineEvents.NewFrameEvent(frame));
 
-        if(transformed == null)
-            return null;
+            transformed = ImageTransformer?.Apply(frame);
 
-        _facePipelineEventBus.Publish(new FacePipelineEvents.NewTransformedFrameEvent(transformed));
+            if (transformed == null)
+                return null;
 
-        if (InferenceService == null)
-            return null;
+            _facePipelineEventBus.Publish(new FacePipelineEvents.NewTransformedFrameEvent(transformed));
 
-        ImageConverter?.Convert(transformed, InferenceService.GetInputTensor());
-        transformed.Dispose();
+            if (InferenceService == null)
+                return null;
 
-        var inferenceResult = InferenceService?.Run();
-        if(inferenceResult == null)
-            return null;
+            ImageConverter?.Convert(transformed, InferenceService.GetInputTensor());
 
-        if(Filter != null)
-            inferenceResult = Filter.Filter(inferenceResult);
+            var inferenceResult = InferenceService.Run();
+            if (inferenceResult == null)
+                return null;
 
-        _facePipelineEventBus.Publish(new FacePipelineEvents.NewFilteredResultEvent(inferenceResult));
+            if (Filter != null)
+                inferenceResult = Filter.Filter(inferenceResult);
 
+            _facePipelineEventBus.Publish(new FacePipelineEvents.NewFilteredResultEvent(inferenceResult));
 
-        return inferenceResult;
+            return inferenceResult;
+        }
+        finally
+        {
+            transformed?.Dispose();
+            frame?.Dispose();
+        }
     }
 
     public void Dispose()

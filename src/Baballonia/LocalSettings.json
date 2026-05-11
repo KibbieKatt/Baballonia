@@ -366,6 +366,7 @@
   "AppSettings_UseOSCQuery": false,
   "AppSettings_OSCPrefix": "",
   "AppSettings_OneEuroEnabled": true,
+  "AppSettings_EyeSmoothingFilter": "Savitzky-Golay FIR",
   "AppSettings_OneEuroMinFreqCutoff": 0.5,
   "AppSettings_OneEuroSpeedCutoff": 3,
   "AppSettings_SteamVRAutoStart": false,

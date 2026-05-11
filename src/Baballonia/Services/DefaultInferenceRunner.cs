@@ -11,16 +11,18 @@ using System.Linq;
 
 namespace Baballonia.Services;
 
-public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRunner
+public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRunner, IDisposable
 {
+    private const string UseGpuEnvVar = "BABALLONIA_USE_GPU";
     public Size InputSize { get; private set; }
     public int OutputSize { get; private set; }
     public DenseTensor<float> InputTensor;
     private ILogger _logger;
     private string _inputName;
-    private InferenceSession _session;
+    private InferenceSession? _session;
     private string[] _outputExpressionNames;
     private bool _isOldEyeModel;
+    private float[]? _outputBuffer;
 
 
     /// <summary>
@@ -32,13 +34,19 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
             throw new FileNotFoundException($"{modelPath} does not exist");
 
         _logger = loggerFactory.CreateLogger(this.GetType().Name + "." + Path.GetFileName(modelPath));
+        if (bool.TryParse(Environment.GetEnvironmentVariable(UseGpuEnvVar), out var useGpuOverride))
+            useGpu = useGpuOverride;
 
         SessionOptions sessionOptions = SetupSessionOptions();
         if (useGpu)
             ConfigurePlatformSpecificGpu(sessionOptions, modelPath);
         else
+        {
             sessionOptions.AppendExecutionProvider_CPU();
+            _logger.LogInformation("Initialized ExecutionProvider: CPU for {ModelName}", modelPath);
+        }
 
+        _session?.Dispose();
         _session = new InferenceSession(modelPath, sessionOptions);
         _inputName = _session.InputMetadata.Keys.First();
         var dimensions = _session.InputMetadata.Values.First().Dimensions;
@@ -192,16 +200,32 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
     /// <returns></returns>
     public float[] Run()
     {
+        var session = _session ?? throw new InvalidOperationException("Inference session has not been initialized.");
         var inputs = new List<NamedOnnxValue>
         {
             NamedOnnxValue.CreateFromTensor(_inputName, InputTensor)
         };
 
-        using var results = _session.Run(inputs);
+        using var results = session.Run(inputs);
 
-        var output = results[0].AsEnumerable<float>().ToArray();
-        OutputSize = output.Length;
-        return output;
+        var outputTensor = results[0].AsTensor<float>();
+        var outputLength = checked((int)outputTensor.Length);
+        if (_outputBuffer == null || _outputBuffer.Length != outputLength)
+            _outputBuffer = new float[outputLength];
+
+        if (outputTensor is DenseTensor<float> denseOutput)
+        {
+            denseOutput.Buffer.Span.CopyTo(_outputBuffer);
+        }
+        else
+        {
+            var outputIndex = 0;
+            foreach (var value in outputTensor)
+                _outputBuffer[outputIndex++] = value;
+        }
+
+        OutputSize = outputLength;
+        return _outputBuffer;
     }
 
     // Dictionary mapping eye output names to their indices
@@ -223,5 +247,11 @@ public class DefaultInferenceRunner(ILoggerFactory loggerFactory) : IInferenceRu
     public DenseTensor<float> GetInputTensor()
     {
         return InputTensor;
+    }
+
+    public void Dispose()
+    {
+        _session?.Dispose();
+        _session = null;
     }
 }

@@ -1,15 +1,18 @@
 using Baballonia.Contracts;
 using Baballonia.Services;
 using Baballonia.Services.Inference;
+using Baballonia.Services.Inference.Filters;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OscCore;
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Styling;
+using System.Linq;
 
 namespace Baballonia.ViewModels.SplitViewPane;
 
@@ -43,6 +46,10 @@ public partial class AppSettingsViewModel : ViewModelBase
     [ObservableProperty]
     [property: SavedSetting("AppSettings_OneEuroEnabled", true)]
     private bool _oneEuroMinEnabled;
+
+    [ObservableProperty]
+    [property: SavedSetting("AppSettings_EyeSmoothingFilter", EyeSmoothingModes.SavitzkyGolayFir)]
+    private string _eyeSmoothingFilter;
 
     [ObservableProperty]
     [property: SavedSetting("AppSettings_OneEuroMinFreqCutoff", 0.5f)]
@@ -84,6 +91,18 @@ public partial class AppSettingsViewModel : ViewModelBase
     [property: SavedSetting("AppSettings_StabilizeEyes", true)]
     private bool _stabilizeEyes;
 
+    [ObservableProperty]
+    [property: SavedSetting("AppSettings_CorruptionDetector", CorruptionDetectorModes.StockRow)]
+    private string _corruptionDetector;
+
+    [ObservableProperty]
+    [property: SavedSetting("AppSettings_BigeyeWindowsBackend", "Stable")]
+    private string _bigeyeWindowsBackend;
+
+    [ObservableProperty]
+    [property: SavedSetting("AppSettings_RecordEyeTrace", false)]
+    private bool _recordEyeTrace;
+
     public List<string> LowestLogLevel { get; } =
     [
         "Debug",
@@ -91,6 +110,10 @@ public partial class AppSettingsViewModel : ViewModelBase
         "Warning",
         "Error"
     ];
+
+    public List<string> CorruptionDetectorOptions { get; } = CorruptionDetectorModes.All.ToList();
+    public List<string> BigeyeWindowsBackendOptions { get; } = ["Stable", "Low Latency"];
+    public List<string> EyeSmoothingFilterOptions { get; } = EyeSmoothingModes.All.ToList();
 
     [ObservableProperty] private bool _onboardingEnabled;
 
@@ -115,6 +138,9 @@ public partial class AppSettingsViewModel : ViewModelBase
         SettingsService = Ioc.Default.GetService<ILocalSettingsService>()!;
         _logger = Ioc.Default.GetService<ILogger<AppSettingsViewModel>>()!;
         SettingsService.Load(this);
+        CorruptionDetector = CorruptionDetectorModes.Normalize(CorruptionDetector);
+        BigeyeWindowsBackend = NormalizeBigeyeWindowsBackend(BigeyeWindowsBackend);
+        EyeSmoothingFilter = NormalizeEyeSmoothingFilter(EyeSmoothingFilter, OneEuroMinEnabled);
 
         // Handle edge case where OSC port is used and the system freaks out
         if (OscTarget.OutPort == 0)
@@ -147,7 +173,63 @@ public partial class AppSettingsViewModel : ViewModelBase
             {
                 _eyePipelineManager.LoadEyeStabilization();
             }
+
+            if (p.PropertyName == nameof(CorruptionDetector))
+            {
+                _eyePipelineManager.LoadCorruptionDetector();
+            }
         };
+    }
+
+    async partial void OnBigeyeWindowsBackendChanged(string value)
+    {
+        var normalized = NormalizeBigeyeWindowsBackend(value);
+        if (normalized != value)
+        {
+            BigeyeWindowsBackend = normalized;
+            return;
+        }
+
+        SettingsService.SaveSetting("AppSettings_BigeyeWindowsBackend", normalized);
+        await _eyePipelineManager.ReloadActiveCamerasAsync();
+    }
+
+    async partial void OnRecordEyeTraceChanged(bool value)
+    {
+        SettingsService.SaveSetting("AppSettings_RecordEyeTrace", value);
+        if (value)
+            await _eyePipelineManager.ReloadActiveCamerasAsync();
+    }
+
+    partial void OnEyeSmoothingFilterChanged(string value)
+    {
+        var normalized = NormalizeEyeSmoothingFilter(value, true);
+        if (normalized != value)
+        {
+            EyeSmoothingFilter = normalized;
+            return;
+        }
+
+        OneEuroMinEnabled = normalized != EyeSmoothingModes.Off;
+        SettingsService.SaveSetting("AppSettings_EyeSmoothingFilter", normalized);
+    }
+
+    private static string NormalizeBigeyeWindowsBackend(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "low latency" => "Low Latency",
+            "dshow" => "Low Latency",
+            _ => "Stable"
+        };
+    }
+
+    private static string NormalizeEyeSmoothingFilter(string? value, bool fallbackEnabled)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return fallbackEnabled ? EyeSmoothingModes.SavitzkyGolayFir : EyeSmoothingModes.Off;
+
+        return EyeSmoothingModes.Normalize(value);
     }
 
     partial void OnOscPrefixChanged(string value)
@@ -204,8 +286,10 @@ public partial class AppSettingsViewModel : ViewModelBase
         try
         {
             SettingsService.SaveSetting("AppSettings_UseGPU", value);
-            var loadFace = _eyePipelineManager.LoadInferenceAsync();
-            var loadEye = _facePipelineManager.LoadInferenceAsync();
+            var loadEye = _eyePipelineManager.LoadInferenceAsync();
+            var loadFace = _facePipelineManager.HasLoadedInference
+                ? _facePipelineManager.LoadInferenceAsync()
+                : Task.CompletedTask;
 
             await loadEye;
             await loadFace;

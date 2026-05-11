@@ -1,6 +1,7 @@
-﻿using Baballonia.Contracts;
+using Baballonia.Contracts;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 
 namespace Baballonia.Services;
@@ -25,6 +26,8 @@ public class MainStandalone : IMainService
         {
             _logger.LogWarning($"TimeBeginPeriod failed with HRESULT {timeEndRes}");
         }
+
+        TryElevateProcessPriority();
     }
 
     public Task Teardown()
@@ -50,5 +53,22 @@ public class MainStandalone : IMainService
         // Begin main OSC update loop
         _logger.LogDebug("Starting OSC update loop...");
         return Task.CompletedTask;
+    }
+
+    private void TryElevateProcessPriority()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            using var currentProcess = Process.GetCurrentProcess();
+            currentProcess.PriorityClass = ProcessPriorityClass.AboveNormal;
+            _logger.LogDebug("Set Baballonia process priority to {PriorityClass}", currentProcess.PriorityClass);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to elevate Baballonia process priority");
+        }
     }
 }

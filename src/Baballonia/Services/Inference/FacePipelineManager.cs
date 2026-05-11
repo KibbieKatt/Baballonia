@@ -39,19 +39,24 @@ public class FacePipelineManager
         _pipeline.ImageConverter = new MatToFloatTensorConverter();
         _pipeline.ImageTransformer = new ImageTransformer();
 
-        _ = LoadInferenceAsync();
         LoadFilter();
     }
+
+    public bool HasLoadedInference => _pipeline.InferenceService != null;
 
     public async Task LoadInferenceAsync()
     {
         var inf = await Task.Run(CreateInference);
+        var previousInference = _pipeline.InferenceService;
         _pipeline.InferenceService = inf;
+        (previousInference as IDisposable)?.Dispose();
     }
 
     public void LoadInference()
     {
+        var previousInference = _pipeline.InferenceService;
         _pipeline.InferenceService = CreateInference();
+        (previousInference as IDisposable)?.Dispose();
     }
 
     public DefaultInferenceRunner CreateInference()
@@ -62,21 +67,14 @@ public class FacePipelineManager
 
     public void LoadFilter()
     {
-        var enabled = _localSettings.ReadSetting<bool>("AppSettings_OneEuroEnabled");
+        (_pipeline.Filter as IDisposable)?.Dispose();
+        _pipeline.Filter = null;
+
+        var mode = EyeSmoothingModes.Normalize(_localSettings.ReadSetting<string>("AppSettings_EyeSmoothingFilter", EyeSmoothingModes.SavitzkyGolayFir));
         var cutoff = _localSettings.ReadSetting<float>("AppSettings_OneEuroMinFreqCutoff");
         var speedCutoff = _localSettings.ReadSetting<float>("AppSettings_OneEuroSpeedCutoff");
 
-        if (!enabled)
-            return;
-
-        var faceArray = new float[Utils.FaceRawExpressions];
-        var faceFilter = new OneEuroFilter(
-            faceArray,
-            minCutoff: cutoff,
-            beta: speedCutoff
-        );
-
-        _pipeline.Filter = faceFilter;
+        _pipeline.Filter = FilterFactory.Create(mode, Utils.FaceRawExpressions, cutoff, speedCutoff);
     }
 
     public void StopCamera()
@@ -102,6 +100,9 @@ public class FacePipelineManager
     {
         if (string.IsNullOrEmpty(cameraAddress))
             return false;
+
+        if (_pipeline.InferenceService == null)
+            await LoadInferenceAsync();
 
         if (_pipeline.VideoSource != null)
         {

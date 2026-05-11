@@ -4,6 +4,7 @@ using Baballonia.Desktop.Calibration;
 using Baballonia.Desktop.Captures;
 using Microsoft.Extensions.DependencyInjection;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using Velopack;
 using TrainerService = Baballonia.Desktop.Calibration.TrainerService;
@@ -19,7 +20,10 @@ sealed class Program
      * but a Mutex should do the job until we have reason to roll one ourselves. Sources:
      * https://stackoverflow.com/questions/6486195/ensuring-only-one-application-instance
      * https://github.com/AvaloniaUI/Avalonia/discussions/17854#discussioncomment-11700510 */
-    private static readonly Mutex Mutex = new(false, "baballonia-unique-id");
+    private static readonly string MutexName = Environment.GetEnvironmentVariable("BABALLONIA_MUTEX_NAME") is { Length: > 0 } overrideName
+        ? overrideName
+        : "baballonia-unique-id";
+    private static readonly Mutex Mutex = new(false, MutexName);
 
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
@@ -32,6 +36,8 @@ sealed class Program
         {
             return 75; // Exit code for BSD's EX_TEMPFAIL, invite the user to try again later
         }
+
+        TryElevateProcessPriority();
 
         VelopackApp.Build().Run();
 
@@ -67,4 +73,20 @@ sealed class Program
             .UsePlatformDetect()
             .WithInterFont()
             .LogToTrace();
+
+    private static void TryElevateProcessPriority()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            using var currentProcess = Process.GetCurrentProcess();
+            currentProcess.PriorityClass = ProcessPriorityClass.AboveNormal;
+        }
+        catch
+        {
+            // Best-effort only.
+        }
+    }
 }

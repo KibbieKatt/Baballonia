@@ -8,18 +8,59 @@ public class DualCameraSource : IVideoSource
 {
     public IVideoSource? LeftCam;
     public IVideoSource? RightCam;
+    public long LastDeliveredFrameSequence
+    {
+        get
+        {
+            var left = LeftCam?.LastDeliveredFrameSequence ?? 0;
+            var right = RightCam?.LastDeliveredFrameSequence ?? 0;
+            return unchecked((left * 397) ^ right);
+        }
+    }
+
+    public long LastDeliveredFrameTimestampTick
+    {
+        get
+        {
+            var left = LeftCam?.LastDeliveredFrameTimestampTick ?? 0;
+            var right = RightCam?.LastDeliveredFrameTimestampTick ?? 0;
+            return Math.Max(left, right);
+        }
+    }
+
+    public string SourceDescription => $"{LeftCam?.SourceDescription ?? "null"}|{RightCam?.SourceDescription ?? "null"}";
+
+    public long FrameSequence
+    {
+        get
+        {
+            var left = LeftCam?.FrameSequence ?? 0;
+            var right = RightCam?.FrameSequence ?? 0;
+            return unchecked((left * 397) ^ right);
+        }
+    }
+
+    public long LatestFrameTimestampTick
+    {
+        get
+        {
+            var left = LeftCam?.LatestFrameTimestampTick ?? 0;
+            var right = RightCam?.LatestFrameTimestampTick ?? 0;
+            return Math.Max(left, right);
+        }
+    }
 
     private Mat? LastLeftImage;
     private Mat? LastRightImage;
 
     public bool Start()
     {
-        return (LeftCam?.Stop() ?? true) && (RightCam?.Stop() ?? true);
+        return (LeftCam?.Start() ?? true) && (RightCam?.Start() ?? true);
     }
 
     public bool Stop()
     {
-        return (LeftCam?.Start() ?? true) && (RightCam?.Start() ?? true);
+        return (LeftCam?.Stop() ?? true) && (RightCam?.Stop() ?? true);
     }
 
     // Here we try to acquire 2 images from both cameras and stitch them into a single image
@@ -36,60 +77,71 @@ public class DualCameraSource : IVideoSource
         var leftIsNew = leftImage != null;
         var rightIsNew = rightImage != null;
 
-        leftImage ??= LastLeftImage;
-        rightImage ??= LastRightImage;
-
-        switch (leftImage)
+        Mat? clonedLeft = null;
+        Mat? clonedRight = null;
+        try
         {
-            case null when rightImage == null:
-                return null;
-            case null:
-                leftImage = rightImage.Clone();
-                break;
-            default:
-                // Don't clone - preserve both cameras when both are available!
-                if (rightImage == null)
-                    rightImage = leftImage.Clone();
-                break;
+            var effectiveLeft = leftImage ?? LastLeftImage;
+            var effectiveRight = rightImage ?? LastRightImage;
+
+            switch (effectiveLeft)
+            {
+                case null when effectiveRight == null:
+                    return null;
+                case null:
+                    clonedLeft = effectiveRight!.Clone();
+                    effectiveLeft = clonedLeft;
+                    break;
+                default:
+                    if (effectiveRight == null)
+                    {
+                        clonedRight = effectiveLeft.Clone();
+                        effectiveRight = clonedRight;
+                    }
+                    break;
+            }
+
+            int minHeight = Math.Min(effectiveLeft.Rows, effectiveRight.Rows);
+            int minWidth = Math.Min(effectiveLeft.Cols, effectiveRight.Cols);
+
+            using var resizedLeft = new Mat();
+            using var resizedRight = new Mat();
+            Cv2.Resize(effectiveLeft, resizedLeft, new Size(minWidth, minHeight));
+            Cv2.Resize(effectiveRight, resizedRight, new Size(minWidth, minHeight));
+
+            int height = Math.Max(resizedRight.Rows, resizedLeft.Rows);
+            int width = resizedRight.Cols + resizedLeft.Cols;
+
+            Mat result = new Mat(height, width, resizedLeft.Type(), Scalar.All(0));
+
+            resizedLeft.CopyTo(result[new Rect(0, 0, resizedLeft.Cols, resizedRight.Rows)]);
+            resizedRight.CopyTo(result[new Rect(resizedLeft.Cols, 0, resizedRight.Cols, resizedRight.Rows)]);
+
+            if (leftIsNew)
+            {
+                LastLeftImage?.Dispose();
+                LastLeftImage = resizedLeft.Clone();
+            }
+
+            if (rightIsNew)
+            {
+                LastRightImage?.Dispose();
+                LastRightImage = resizedRight.Clone();
+            }
+
+            return result;
         }
-
-        int minHeight = Math.Min(leftImage.Rows, rightImage.Rows);
-        int minWidth = Math.Min(leftImage.Cols, rightImage.Cols);
-
-
-        Mat resizedLeft = new Mat();
-        Mat resizedRight = new Mat();
-        Cv2.Resize(leftImage, resizedLeft, new Size(minWidth, minHeight));
-        Cv2.Resize(rightImage, resizedRight, new Size(minWidth, minHeight));
-
-        int height = Math.Max(resizedRight.Rows, resizedLeft.Rows);
-        int width = resizedRight.Cols + resizedLeft.Cols;
-
-        Mat result = new Mat(height, width, resizedLeft.Type(), Scalar.All(0));
-
-        resizedLeft.CopyTo(result[new Rect(0, 0, resizedLeft.Cols, resizedRight.Rows)]);
-        resizedRight.CopyTo(result[new Rect(resizedLeft.Cols, 0, resizedRight.Cols, resizedRight.Rows)]);
-
-        // Update last images only for new frames
-        if (leftIsNew)
+        finally
         {
-            LastLeftImage?.Dispose();
-            LastLeftImage = resizedLeft.Clone();
+            clonedLeft?.Dispose();
+            clonedRight?.Dispose();
+
+            if (leftIsNew)
+                leftImage?.Dispose();
+
+            if (rightIsNew)
+                rightImage?.Dispose();
         }
-
-        if (rightIsNew)
-        {
-            LastRightImage?.Dispose();
-            LastRightImage = resizedRight.Clone();
-        }
-
-        // Only dispose new images, not the cached LastImages
-        if (leftIsNew)
-            resizedLeft.Dispose();
-        if (rightIsNew)
-            resizedRight.Dispose();
-
-        return result;
     }
 
     public void Dispose()

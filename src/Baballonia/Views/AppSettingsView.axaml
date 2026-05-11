@@ -218,16 +218,20 @@
                   Margin="5"
                   FontSize="16"
                   FontWeight="SemiBold"
-                  Text="{x:Static assets:Resources.Settings_Filter_Header}" />
+                  Text="Eye Smoothing Filter" />
               <TextBlock
                   Margin="5"
                   FontSize="14"
                   Foreground="{DynamicResource SystemChromeGrayColor}"
-                  Text="{x:Static assets:Resources.Settings_Filter_Description}" />
+                  Text="Choose the live smoothing algorithm. One-Euro tuning below only affects OneEuro Current." />
             </StackPanel>
-            <ToggleSwitch
+            <ComboBox
               Grid.Column="3"
-              IsChecked="{Binding OneEuroMinEnabled,  Mode=TwoWay}"/>
+              Width="220"
+              VerticalAlignment="Center"
+              Margin="0,8,8,8"
+              ItemsSource="{Binding EyeSmoothingFilterOptions}"
+              SelectedItem="{Binding EyeSmoothingFilter, Mode=TwoWay}" />
           </Grid>
         </Expander.Header>
         <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
@@ -323,6 +327,15 @@
         </Grid>
       </Expander>
 
+      <controls:SettingsBlock
+          Title="Eye Trace Recording"
+          Description="Record real eye traces to Documents\\ProjectBabble\\EyeTraceCapture for N-Euro training. Turn it on, play, then turn it off."
+          IconPath="DataUsageSettingsRegular">
+        <controls:SettingsBlock.SettingsContent>
+          <ToggleSwitch IsChecked="{Binding RecordEyeTrace, Mode=TwoWay}" />
+        </controls:SettingsBlock.SettingsContent>
+      </controls:SettingsBlock>
+
       <controls:SettingsToggle
           Title="{x:Static assets:Resources.Settings_GPU_Header}"
           Description="{x:Static assets:Resources.Settings_GPU_Description}"
@@ -340,6 +353,32 @@
           Description="{x:Static assets:Resources.Calibration_Eye_Expressions_Stabilize_Eyes_Description}"
           IconPath="EyeTrackingRegular"
           SettingToggled="{Binding StabilizeEyes, Mode=TwoWay}" />
+
+      <controls:SettingsBlock
+          Title="Eye Corruption Filter"
+          Description="Choose how Baballonia drops corrupted eye frames before inference."
+          IconPath="EyeTrackingSettingsRegular">
+        <controls:SettingsBlock.SettingsContent>
+          <ComboBox
+              VerticalAlignment="Center"
+              Width="220"
+              ItemsSource="{Binding CorruptionDetectorOptions}"
+              SelectedItem="{Binding CorruptionDetector, Mode=TwoWay}" />
+        </controls:SettingsBlock.SettingsContent>
+      </controls:SettingsBlock>
+
+      <controls:SettingsBlock
+          Title="Bigeye Capture Backend"
+          Description="Stable uses MSMF. Low Latency uses DSHOW."
+          IconPath="VideoRegular">
+        <controls:SettingsBlock.SettingsContent>
+          <ComboBox
+              VerticalAlignment="Center"
+              Width="220"
+              ItemsSource="{Binding BigeyeWindowsBackendOptions}"
+              SelectedItem="{Binding BigeyeWindowsBackend, Mode=TwoWay}" />
+        </controls:SettingsBlock.SettingsContent>
+      </controls:SettingsBlock>
 
       <controls:SettingsBlock
         Title="{x:Static assets:Resources.Settings_LogLevel_Header}"

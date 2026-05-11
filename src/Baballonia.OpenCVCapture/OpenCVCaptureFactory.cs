@@ -12,6 +12,12 @@ public class OpenCvCaptureFactory(ILoggerFactory loggerFactory) : ICaptureFactor
 
     public bool CanConnect(string address)
     {
+        if (address.StartsWith("msmf:", StringComparison.OrdinalIgnoreCase) ||
+            address.StartsWith("dshow:", StringComparison.OrdinalIgnoreCase))
+        {
+            address = address[(address.IndexOf(':') + 1)..];
+        }
+
         var lowered = address.ToLower();
         var serial = lowered.StartsWith("com") ||
                      lowered.StartsWith("/dev/tty") ||

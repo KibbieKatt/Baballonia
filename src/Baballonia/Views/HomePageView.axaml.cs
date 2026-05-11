@@ -6,6 +6,7 @@ using Avalonia.VisualTree;
 using Baballonia.Contracts;
 using Baballonia.Helpers;
 using Baballonia.ViewModels.SplitViewPane;
+using Microsoft.Extensions.Logging;
 using System;
 using System.ComponentModel;
 using System.Linq;
@@ -21,14 +22,17 @@ public partial class HomePageView : ViewBase
     };
 
     private bool _isLayoutUpdating;
+    private bool _diagnosticsAttached;
 
     private readonly IDeviceEnumerator _deviceEnumerator;
     private readonly ILocalSettingsService _localSettings;
+    private readonly ILogger<HomePageView> _logger;
 
-    public HomePageView(IDeviceEnumerator deviceEnumerator, ILocalSettingsService localSettings)
+    public HomePageView(IDeviceEnumerator deviceEnumerator, ILocalSettingsService localSettings, ILogger<HomePageView> logger)
     {
         _deviceEnumerator = deviceEnumerator;
         _localSettings = localSettings;
+        _logger = logger;
         InitializeComponent();
 
         if (Utils.IsSupportedDesktopOS)
@@ -146,6 +150,7 @@ public partial class HomePageView : ViewBase
             SetupCropEvents(vm.LeftCamera, LeftMouthWindow);
             SetupCropEvents(vm.RightCamera, RightMouthWindow);
             SetupCropEvents(vm.FaceCamera, FaceWindow);
+            AttachDiagnostics(vm);
 
             vm.SelectedCalibrationTextBlock = this.Find<TextBlock>("SelectedCalibrationTextBlockColor")!;
             vm.SelectedCalibrationTextBlock.Text = Assets.Resources.Home_Eye_Calibration;
@@ -188,6 +193,69 @@ public partial class HomePageView : ViewBase
 
         vm.SelectedCalibrationTextBlock.Text = menuItem.Header?.ToString()!;
         vm.RequestedVRCalibration = CalibrationRoutine.Map[menuItem.Name!];
+    }
+
+    private void AttachDiagnostics(HomePageViewModel vm)
+    {
+        if (Environment.GetEnvironmentVariable("BABALLONIA_DIAGNOSTICS") != "1")
+            return;
+
+        if (_diagnosticsAttached)
+            return;
+
+        _diagnosticsAttached = true;
+
+        AttachCameraDiagnostics("Left", vm.LeftCamera, LeftViewBox, LeftMouthWindow);
+        AttachCameraDiagnostics("Right", vm.RightCamera, RightViewBox, RightMouthWindow);
+        AttachCameraDiagnostics("Face", vm.FaceCamera, FaceViewBox, FaceWindow);
+    }
+
+    private void AttachCameraDiagnostics(string name, HomePageViewModel.CameraControllerModel model, Viewbox viewbox, Image image)
+    {
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is not nameof(HomePageViewModel.CameraControllerModel.IsCameraRunning) and
+                not nameof(HomePageViewModel.CameraControllerModel.Bitmap))
+                return;
+
+            var bitmapSize = model.Bitmap == null ? "null" : $"{model.Bitmap.PixelSize.Width}x{model.Bitmap.PixelSize.Height}";
+            _logger.LogInformation(
+                "View {CameraName} model {PropertyName}: running={Running} bitmap={BitmapSize} viewVisible={ViewVisible} imageVisible={ImageVisible} sourceNull={SourceNull}",
+                name,
+                args.PropertyName,
+                model.IsCameraRunning,
+                bitmapSize,
+                viewbox.IsVisible,
+                image.IsVisible,
+                image.Source == null);
+        };
+
+        viewbox.PropertyChanged += (_, args) =>
+        {
+            if (args.Property?.Name != "IsVisible")
+                return;
+
+            _logger.LogInformation(
+                "View {CameraName} viewbox visibility: visible={Visible} running={Running} sourceNull={SourceNull}",
+                name,
+                viewbox.IsVisible,
+                model.IsCameraRunning,
+                image.Source == null);
+        };
+
+        image.PropertyChanged += (_, args) =>
+        {
+            if (args.Property != Image.SourceProperty)
+                return;
+
+            _logger.LogInformation(
+                "View {CameraName} image source: sourceNull={SourceNull} running={Running} viewVisible={ViewVisible} imageBounds={Bounds}",
+                name,
+                image.Source == null,
+                model.IsCameraRunning,
+                viewbox.IsVisible,
+                image.Bounds);
+        };
     }
 
     private void OnExpanderCollapsed(object? sender, RoutedEventArgs e)

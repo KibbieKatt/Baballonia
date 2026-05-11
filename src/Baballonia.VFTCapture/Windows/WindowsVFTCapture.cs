@@ -54,8 +54,6 @@ public sealed class WindowsVftCapture(string source, ILogger logger) : Capture(s
 
     private Task VideoCapture_UpdateLoop()
     {
-        Mat yuyvMat = new();
-        Mat yuvConvert = new();
         while (_loop)
         {
             try
@@ -63,14 +61,13 @@ public sealed class WindowsVftCapture(string source, ILogger logger) : Capture(s
                 IsReady = _videoCapture?.Read(_originalMat) == true;
                 if (!IsReady) continue;
 
-                yuyvMat = Mat.FromPixelData(400, 400, MatType.CV_8UC2, _originalMat.Data);
+                using var yuyvMat = Mat.FromPixelData(400, 400, MatType.CV_8UC2, _originalMat.Data);
+                using var grayscale = yuyvMat.CvtColor(ColorConversionCodes.YUV2GRAY_Y422, 0);
+                using var cropped = grayscale.ColRange(VFTCommon.ColumnRange).Clone();
+                using var resized = cropped.Resize(VFTCommon.ImageSize);
+                using var blurred = resized.GaussianBlur(VFTCommon.GaussianBlurSize, 0);
 
-                yuvConvert = yuyvMat.CvtColor(ColorConversionCodes.YUV2GRAY_Y422, 0);
-                yuvConvert = yuvConvert.ColRange(VFTCommon.ColumnRange);
-                yuvConvert = yuvConvert.Resize(VFTCommon.ImageSize);
-                yuvConvert = yuvConvert.GaussianBlur(VFTCommon.GaussianBlurSize, 0);
-
-                var rawMat = yuvConvert.LUT(VFTCommon.Lut);
+                var rawMat = blurred.LUT(VFTCommon.Lut);
                 SetRawMat(rawMat);
             }
             // catch (TaskCanceledException)
@@ -82,8 +79,6 @@ public sealed class WindowsVftCapture(string source, ILogger logger) : Capture(s
                 // ignored
             }
         }
-        yuyvMat.Dispose();
-        yuvConvert.Dispose();
 
         return Task.CompletedTask;
     }

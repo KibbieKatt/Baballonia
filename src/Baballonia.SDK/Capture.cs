@@ -1,6 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
 using OpenCvSharp;
+using System;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Baballonia.SDK;
 
@@ -9,14 +12,19 @@ namespace Baballonia.SDK;
 /// </summary>
 public abstract class Capture(string source, ILogger logger) : IDisposable
 {
+    public readonly record struct RawFrameSnapshot(Mat? Frame, long Sequence, long TimestampTick, string Source);
+
     protected ILogger Logger = logger;
     private Mat? _rawMat;
-    private object _rawMatLock = new();
+    private readonly object _rawMatLock = new();
+    private readonly AutoResetEvent _frameReadyEvent = new(false);
 
     /// <summary>
     /// Where this Capture source is currently pulling data from
     /// </summary>
     public string Source { get; set; } = source;
+    public virtual long LatestFrameSequence => 0;
+    public virtual long LatestFrameTimestampTick => 0;
 
     /// <summary>
     /// Represents the incoming frame data for this capture source.
@@ -24,7 +32,7 @@ public abstract class Capture(string source, ILogger logger) : IDisposable
     /// Acquiring this value the caller takes ownership of the Mat object and sets the internal reference to null. <br/>
     /// Thread safe
     /// </summary>
-    public Mat? AcquireRawMat()
+    public virtual Mat? AcquireRawMat()
     {
         Mat? result;
         lock (_rawMatLock)
@@ -33,6 +41,11 @@ public abstract class Capture(string source, ILogger logger) : IDisposable
             _rawMat = null;
         }
         return result;
+    }
+
+    public virtual RawFrameSnapshot AcquireRawFrameSnapshot()
+    {
+        return new RawFrameSnapshot(AcquireRawMat(), LatestFrameSequence, LatestFrameTimestampTick, Source);
     }
 
     /// <summary>
@@ -52,6 +65,40 @@ public abstract class Capture(string source, ILogger logger) : IDisposable
             _rawMat = value;
         }
     }
+
+    protected void SignalFrameReady()
+    {
+        _frameReadyEvent.Set();
+    }
+
+    public virtual bool WaitForNewFrame(long lastSeenSequence, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (LatestFrameSequence > lastSeenSequence)
+            return true;
+
+        if (timeout <= TimeSpan.Zero)
+            return false;
+
+        var timeoutDeadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        var waitHandles = new[] { _frameReadyEvent, cancellationToken.WaitHandle };
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (LatestFrameSequence > lastSeenSequence)
+                return true;
+
+            var remainingTicks = timeoutDeadline - Stopwatch.GetTimestamp();
+            if (remainingTicks <= 0)
+                return LatestFrameSequence > lastSeenSequence;
+
+            var remainingMs = (int)Math.Ceiling(remainingTicks * 1000.0 / Stopwatch.Frequency);
+            var waitResult = WaitHandle.WaitAny(waitHandles, Math.Max(1, remainingMs));
+            if (waitResult == WaitHandle.WaitTimeout)
+                return LatestFrameSequence > lastSeenSequence;
+        }
+    }
     /// <summary>
     /// Is this Capture source ready to produce data?
     /// </summary>
@@ -69,5 +116,14 @@ public abstract class Capture(string source, ILogger logger) : IDisposable
     /// <returns></returns>
     public abstract Task<bool> StopCapture();
 
-    public virtual void Dispose(){}
+    public virtual void Dispose()
+    {
+        lock (_rawMatLock)
+        {
+            _rawMat?.Dispose();
+            _rawMat = null;
+        }
+
+        _frameReadyEvent.Dispose();
+    }
 }

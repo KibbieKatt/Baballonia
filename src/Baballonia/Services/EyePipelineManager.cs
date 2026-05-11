@@ -47,15 +47,19 @@ public class EyePipelineManager
         dualTransformer.RightTransformer.TargetSize = new Size(128, 128);
         _pipeline.ImageTransformer = dualTransformer;
 
-        _ = LoadInferenceAsync();
         LoadFilter();
         LoadEyeStabilization();
+        LoadCorruptionDetector();
     }
+
+    public bool HasLoadedInference => _pipeline.InferenceService != null;
 
     public async Task LoadInferenceAsync()
     {
         var inf = await Task.Run(CreateInference);
+        var previousInference = _pipeline.InferenceService;
         _pipeline.InferenceService = inf;
+        (previousInference as IDisposable)?.Dispose();
     }
 
     private DefaultInferenceRunner CreateInference()
@@ -76,32 +80,41 @@ public class EyePipelineManager
 
     public void LoadInference()
     {
+        var previousInference = _pipeline.InferenceService;
         _pipeline.InferenceService = CreateInference();
+        (previousInference as IDisposable)?.Dispose();
     }
 
     public void LoadFilter()
     {
-        var enabled = _localSettings.ReadSetting<bool>("AppSettings_OneEuroEnabled");
+        (_pipeline.Filter as IDisposable)?.Dispose();
+        _pipeline.Filter = null;
+
+        var mode = EyeSmoothingModes.Normalize(_localSettings.ReadSetting<string>("AppSettings_EyeSmoothingFilter", EyeSmoothingModes.SavitzkyGolayFir));
         var cutoff = _localSettings.ReadSetting<float>("AppSettings_OneEuroMinFreqCutoff");
         var speedCutoff = _localSettings.ReadSetting<float>("AppSettings_OneEuroSpeedCutoff");
 
-        if (!enabled)
-            return;
-
-        var eyeArray = new float[Utils.EyeRawExpressions];
-        var eyeFilter = new OneEuroFilter(
-            eyeArray,
-            minCutoff: cutoff,
-            beta: speedCutoff
-        );
-
-        _pipeline.Filter = eyeFilter;
+        _pipeline.ActiveFilterMode = mode;
+        _pipeline.Filter = FilterFactory.Create(mode, Utils.EyeRawExpressions, cutoff, speedCutoff);
     }
 
     public void LoadEyeStabilization()
     {
         var stabilizeEyes = _localSettings.ReadSetting<bool>("AppSettings_StabilizeEyes", true);
         _pipeline.StabilizeEyes = stabilizeEyes;
+    }
+
+    public void LoadCorruptionDetector()
+    {
+        var selected = _localSettings.ReadSetting<string>("AppSettings_CorruptionDetector", CorruptionDetectorModes.StockRow);
+        var normalized = CorruptionDetectorModes.Normalize(selected);
+
+        if (_pipeline.CorruptionDetector.Mode == normalized)
+            return;
+
+        var previous = _pipeline.CorruptionDetector;
+        _pipeline.CorruptionDetector = FrameCorruptionDetectorFactory.Create(normalized);
+        (previous as IDisposable)?.Dispose();
     }
 
     public void SetLeftTransformation(CameraSettings cameraSettings)
@@ -123,6 +136,9 @@ public class EyePipelineManager
     {
         if (string.IsNullOrEmpty(cameraAddress))
             return false;
+
+        if (!HasLoadedInference)
+            await LoadInferenceAsync();
 
         if (_pipeline.VideoSource == null)
         {
@@ -146,6 +162,10 @@ public class EyePipelineManager
             if (cameraAddress == _currentRightAddress && _currentRightAddress != null)
             {
                 var tmp = dualCameraSource.RightCam;
+                if (!ReferenceEquals(dualCameraSource.LeftCam, tmp))
+                    dualCameraSource.LeftCam?.Dispose();
+                dualCameraSource.LeftCam = null;
+                dualCameraSource.RightCam = null;
                 _pipeline.VideoSource = tmp;
                 _currentLeftAddress = cameraAddress;
                 return true;
@@ -180,6 +200,7 @@ public class EyePipelineManager
             var source = new DualCameraSource();
             source.LeftCam = cam;
             source.RightCam = tmp;
+            _pipeline.VideoSource = source;
 
             _currentLeftAddress = cameraAddress;
             return true;
@@ -192,6 +213,9 @@ public class EyePipelineManager
     {
         if (string.IsNullOrEmpty(cameraAddress))
             return false;
+
+        if (!HasLoadedInference)
+            await LoadInferenceAsync();
 
         if (_pipeline.VideoSource == null)
         {
@@ -215,6 +239,10 @@ public class EyePipelineManager
             if (cameraAddress == _currentLeftAddress && _currentLeftAddress != null)
             {
                 var tmp = dualCameraSource.LeftCam;
+                if (!ReferenceEquals(dualCameraSource.RightCam, tmp))
+                    dualCameraSource.RightCam?.Dispose();
+                dualCameraSource.LeftCam = null;
+                dualCameraSource.RightCam = null;
                 _pipeline.VideoSource = tmp;
                 _currentRightAddress = cameraAddress;
                 return true;
@@ -249,6 +277,7 @@ public class EyePipelineManager
             var source = new DualCameraSource();
             source.RightCam = cam;
             source.LeftCam = tmp;
+            _pipeline.VideoSource = source;
 
             _currentRightAddress = cameraAddress;
             return true;
@@ -329,5 +358,32 @@ public class EyePipelineManager
     public void SetFilter(IFilter? filter)
     {
         _pipeline.Filter = filter;
+    }
+
+    public async Task ReloadActiveCamerasAsync()
+    {
+        var leftAddress = _currentLeftAddress;
+        var rightAddress = _currentRightAddress;
+        if (string.IsNullOrWhiteSpace(leftAddress) && string.IsNullOrWhiteSpace(rightAddress))
+            return;
+
+        var leftPreferred = NormalizePreferredCapture(_localSettings.ReadSetting<string>("LastOpenedPreferredCaptureLeftCamera"));
+        var rightPreferred = NormalizePreferredCapture(_localSettings.ReadSetting<string>("LastOpenedPreferredCaptureRightCamera"));
+
+        StopAllCameras();
+
+        if (!string.IsNullOrWhiteSpace(leftAddress))
+            await StartLeftVideoSource(leftAddress, leftPreferred);
+
+        if (!string.IsNullOrWhiteSpace(rightAddress))
+            await StartRightVideoSource(rightAddress, rightPreferred);
+    }
+
+    private static string NormalizePreferredCapture(string? preferred)
+    {
+        if (string.IsNullOrWhiteSpace(preferred) || string.Equals(preferred, "Default", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        return preferred;
     }
 }

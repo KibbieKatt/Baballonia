@@ -122,6 +122,8 @@ public class App : Application
             services.AddSingleton<DfrSendService>();
             services.AddTransient<OscQueryServiceWrapper>();
             services.AddSingleton<ParameterSenderService>();
+            services.AddSingleton<ProcessAffinityService>();
+            services.AddSingleton<EyeTraceRecorderService>();
             services.AddTransient<GithubService>();
             services.AddTransient<DataUploaderService>();
             services.AddTransient<ICommandSenderFactory, CommandSenderFactory>();
@@ -162,6 +164,8 @@ public class App : Application
 
             services.AddHostedService(provider => provider.GetService<OscRecvService>()!);
             services.AddHostedService(provider => provider.GetService<ParameterSenderService>()!);
+            services.AddHostedService(provider => provider.GetService<ProcessAffinityService>()!);
+            services.AddHostedService(provider => provider.GetService<EyeTraceRecorderService>()!);
 
             // Configuration
             IConfiguration config = new ConfigurationBuilder()

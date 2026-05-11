@@ -11,6 +11,8 @@ public interface IEventBus
     void Unsubscribe<T>(Action<T> callback);
 
     void Publish<T>(T data);
+
+    bool HasSubscribers<T>();
 }
 
 public interface IFacePipelineEventBus : IEventBus
@@ -63,13 +65,24 @@ public class GenericEventBus : IEventBus
 
     public void Publish<T>(T data)
     {
+        Delegate[] callbacks;
         lock (_lock)
         {
-            if (_subscribers.TryGetValue(typeof(T), out var list))
-            {
-                foreach (var callback in list.Cast<Action<T>>())
-                    callback(data);
-            }
+            if (!_subscribers.TryGetValue(typeof(T), out var list) || list.Count == 0)
+                return;
+
+            callbacks = list.ToArray();
+        }
+
+        foreach (var callback in callbacks.Cast<Action<T>>())
+            callback(data);
+    }
+
+    public bool HasSubscribers<T>()
+    {
+        lock (_lock)
+        {
+            return _subscribers.TryGetValue(typeof(T), out var list) && list.Count > 0;
         }
     }
 }

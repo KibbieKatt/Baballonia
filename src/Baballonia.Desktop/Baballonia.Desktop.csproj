@@ -153,14 +153,23 @@
     </Target>
     <!-- TODO: this sucks -->
     <Target Name="CopyModulesToFolderPublish" AfterTargets="Publish">
+        <PropertyGroup>
+            <PublishModulesDir>$(PublishDir)Modules\</PublishModulesDir>
+        </PropertyGroup>
         <ItemGroup>
-            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.SerialCameraCapture.dll')" Include="$(OutputPath)\publish\Baballonia.SerialCameraCapture.dll" />
-            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.OpenCVCapture.dll')" Include="$(OutputPath)\publish\Baballonia.OpenCVCapture.dll" />
-            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.IPCameraCapture.dll')" Include="$(OutputPath)\publish\Baballonia.IPCameraCapture.dll" />
-            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.VFTCapture.dll')" Include="$(OutputPath)\publish\Baballonia.VFTCapture.dll" />
-            <PublishModuleDlls Condition="Exists('$(OutputPath)\publish\Baballonia.LibV4L2Capture.dll')" Include="$(OutputPath)\publish\Baballonia.LibV4L2Capture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.SerialCameraCapture.dll')" Include="$(PublishDir)Baballonia.SerialCameraCapture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.OpenCVCapture.dll')" Include="$(PublishDir)Baballonia.OpenCVCapture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.IPCameraCapture.dll')" Include="$(PublishDir)Baballonia.IPCameraCapture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.VFTCapture.dll')" Include="$(PublishDir)Baballonia.VFTCapture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.LibV4L2Capture.dll')" Include="$(PublishDir)Baballonia.LibV4L2Capture.dll" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.SerialCameraCapture.pdb')" Include="$(PublishDir)Baballonia.SerialCameraCapture.pdb" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.OpenCVCapture.pdb')" Include="$(PublishDir)Baballonia.OpenCVCapture.pdb" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.IPCameraCapture.pdb')" Include="$(PublishDir)Baballonia.IPCameraCapture.pdb" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.VFTCapture.pdb')" Include="$(PublishDir)Baballonia.VFTCapture.pdb" />
+            <PublishModuleDlls Condition="Exists('$(PublishDir)Baballonia.LibV4L2Capture.pdb')" Include="$(PublishDir)Baballonia.LibV4L2Capture.pdb" />
         </ItemGroup>
-        <Move SourceFiles="@(PublishModuleDlls)" DestinationFolder="$(OutputPath)\publish\Modules\" />
+        <MakeDir Directories="$(PublishModulesDir)" />
+        <Move SourceFiles="@(PublishModuleDlls)" DestinationFolder="$(PublishModulesDir)" Condition="'@(PublishModuleDlls)' != ''" />
     </Target>
 
     <!-- SkiaSharp is currently broken on ARM for some reason -->

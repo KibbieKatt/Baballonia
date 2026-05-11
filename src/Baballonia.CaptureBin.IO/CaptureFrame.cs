@@ -62,7 +62,7 @@ public sealed class Frame
     {
         if (LeftJpeg.Length == 0) return new Mat();
         using var buf = Mat.FromPixelData(1, LeftJpeg.Length, MatType.CV_8UC1, LeftJpeg);
-        var bgr = Cv2.ImDecode(buf, ImreadModes.Color);
+        using var bgr = Cv2.ImDecode(buf, ImreadModes.Color);
         if (bgr.Empty()) return new Mat();
         var gray = new Mat();
         Cv2.CvtColor(bgr, gray, ColorConversionCodes.BGR2GRAY);
@@ -76,7 +76,7 @@ public sealed class Frame
     {
         if (RightJpeg.Length == 0) return new Mat();
         using var buf = Mat.FromPixelData(1, RightJpeg.Length, MatType.CV_8UC1, RightJpeg);
-        var bgr = Cv2.ImDecode(buf, ImreadModes.Color);
+        using var bgr = Cv2.ImDecode(buf, ImreadModes.Color);
         if (bgr.Empty()) return new Mat();
         var gray = new Mat();
         Cv2.CvtColor(bgr, gray, ColorConversionCodes.BGR2GRAY);

@@ -42,52 +42,47 @@ public class FastCorruptionDetector(
 
     private static double CalculateRowPatternConsistency(Mat image)
     {
-        Mat gray;
-
+        Mat? gray = null;
+        var source = image;
         if (image.Channels() == 3)
         {
             gray = new Mat();
             Cv2.CvtColor(image, gray, ColorConversionCodes.BGR2GRAY);
-        }
-        else
-        {
-            gray = image.Clone();
+            source = gray;
         }
 
-        Mat grayNorm = new Mat();
-        gray.ConvertTo(grayNorm, MatType.CV_32F, 1.0 / 255.0);
-
-        var rowMeans = new double[grayNorm.Rows];
-        for (int i = 0; i < grayNorm.Rows; i++)
+        try
         {
-            using (var row = grayNorm.Row(i))
+            using var grayNorm = new Mat();
+            source.ConvertTo(grayNorm, MatType.CV_32F, 1.0 / 255.0);
+
+            var rowMeans = new double[grayNorm.Rows];
+            for (int i = 0; i < grayNorm.Rows; i++)
             {
-                Scalar meanScalar = Cv2.Mean(row);
-                rowMeans[i] = meanScalar.Val0;
+                using (var row = grayNorm.Row(i))
+                {
+                    Scalar meanScalar = Cv2.Mean(row);
+                    rowMeans[i] = meanScalar.Val0;
+                }
             }
-        }
 
-        if (rowMeans.Length <= 1)
+            if (rowMeans.Length <= 1)
+                return 0.0;
+
+            var diffs = new double[rowMeans.Length - 1];
+            for (int i = 0; i < diffs.Length; i++)
+            {
+                diffs[i] = rowMeans[i + 1] - rowMeans[i];
+            }
+
+            double mean = diffs.Average();
+            double variance = diffs.Select(d => Math.Pow(d - mean, 2)).Average();
+            return Math.Sqrt(variance);
+        }
+        finally
         {
-            gray.Dispose();
-            grayNorm.Dispose();
-            return 0.0;
+            gray?.Dispose();
         }
-
-        var diffs = new double[rowMeans.Length - 1];
-        for (int i = 0; i < diffs.Length; i++)
-        {
-            diffs[i] = rowMeans[i + 1] - rowMeans[i];
-        }
-
-        double mean = diffs.Average();
-        double variance = diffs.Select(d => Math.Pow(d - mean, 2)).Average();
-        double standardDeviation = Math.Sqrt(variance);
-
-        gray.Dispose();
-        grayNorm.Dispose();
-
-        return standardDeviation;
     }
 
     private void UpdateAdaptiveThreshold(double value)

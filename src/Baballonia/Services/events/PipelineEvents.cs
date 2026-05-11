@@ -21,5 +21,15 @@ public class EyePipelineEvents
 
     public record NewFilteredResultEvent(float[] result);
 
+    public record TraceResultEvent(
+        float[] rawResult,
+        float[] filteredResult,
+        float[] processedResult,
+        long frameSequence,
+        long frameCapturedTick,
+        long pipelineCompletedTick,
+        string sourceDescription,
+        string filterMode);
+
     public record ExceptionEvent(Exception exception);
 }

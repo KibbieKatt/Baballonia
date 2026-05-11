@@ -1,8 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using Baballonia.Contracts;
 using Baballonia.Helpers;
 using Baballonia.Services;
@@ -19,6 +21,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Buffer = System.Buffer;
 using Rect = Avalonia.Rect;
@@ -58,20 +61,31 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
         [ObservableProperty] private bool _captureMethodVisible = false;
         public ObservableCollection<string> Suggestions { get; set; } = [];
         public ObservableCollection<string> CaptureMethods { get; set; } = [];
-
+        private readonly object _previewFrameLock = new();
+        private Mat? _queuedPreviewFrame;
+        private int _previewUpdateScheduled;
+        private long _previewFramesReceived;
+        private long _previewFramesQueued;
+        private long _previewFramesDropped;
+        private long _previewFramesRendered;
+        private long _lastPreviewLogTick;
+        private int _previewEnabled = 1;
         private readonly ILocalSettingsService _localSettingsService;
         private readonly IPlatformConnector _platformConnector;
         private readonly IDeviceEnumerator _deviceEnumerator;
+        private readonly ILogger<HomePageViewModel> _logger;
 
 
         public CameraControllerModel(ILocalSettingsService localSettingsService, IPlatformConnector platformConnector,
             IDeviceEnumerator deviceEnumerator,
+            ILogger<HomePageViewModel> logger,
             string name, string[] cameras,
             Camera camera)
         {
             _localSettingsService = localSettingsService;
             _platformConnector = platformConnector;
             _deviceEnumerator = deviceEnumerator;
+            _logger = logger;
 
             Name = name;
             Camera = camera;
@@ -132,7 +146,11 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
                 foreach (var match in availableCaptureFactories)
                     CaptureMethods.Add(match.GetProviderName());
 
-                SelectedCaptureMethod = availableCaptureFactories.First().GetProviderName();
+                var preferredCapture = _localSettingsService.ReadSetting<string>("LastOpenedPreferredCapture" + Name);
+                if (preferredCapture == "Default" || string.IsNullOrEmpty(preferredCapture) || !CaptureMethods.Contains(preferredCapture))
+                    SelectedCaptureMethod = Assets.Resources.Home_Backend_Default;
+                else
+                    SelectedCaptureMethod = preferredCapture;
             }
             else
             {
@@ -183,138 +201,254 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
 
         public void FaceNewImageUpdateEventHandler(FacePipelineEvents.NewFrameEvent e)
         {
+            if (!ShouldProcessPreview())
+                return;
+
             if (IsCropMode)
-                FaceImageUpdateHandler(e.image);
+                QueueFacePreview(e.image);
         }
 
         public void FaceNewTransformedUpdateEventHandler(FacePipelineEvents.NewTransformedFrameEvent e)
         {
+            if (!ShouldProcessPreview())
+                return;
+
             if (!IsCropMode)
-                FaceImageUpdateHandler(e.image);
-        }
-
-        private void FaceImageUpdateHandler(Mat image)
-        {
-            if (image == null)
-            {
-                IsCameraRunning = false;
-                StartButtonEnabled = true;
-                StopButtonEnabled = false;
-                Bitmap = null;
-                return;
-            }
-
-            if (!IsCameraRunning)
-                return;
-
-            StartButtonEnabled = false;
-            StopButtonEnabled = true;
-
-            if (Camera == Camera.Face)
-            {
-                UpdateBitmap(image);
-            }
+                QueueFacePreview(e.image);
         }
 
         public void EyeNewImageUpdateEventHandler(EyePipelineEvents.NewFrameEvent e)
         {
-            if (IsCropMode)
-                EyeImageUpdateHandler(e.image);
+            if (!ShouldProcessPreview())
+                return;
+
+            QueueEyePreview(e.image);
         }
 
         public void EyeNewTransformedUpdateEventHandler(EyePipelineEvents.NewTransformedFrameEvent e)
         {
-            if (!IsCropMode)
-                EyeImageUpdateHandler(e.image);
+            // Eye preview stays on the live raw feed so the panel reflects actual camera motion.
         }
 
-        private void EyeImageUpdateHandler(Mat image)
+        private void QueueFacePreview(Mat image)
         {
+            Interlocked.Increment(ref _previewFramesReceived);
             if (image == null)
             {
-                IsCameraRunning = false;
-                StartButtonEnabled = true;
-                StopButtonEnabled = false;
-                Bitmap = null;
+                Dispatcher.UIThread.Post(ClearPreview);
                 return;
             }
 
             if (!IsCameraRunning)
                 return;
 
+            var (width, height, channels) = GetFrameInfo(image);
+            if (Camera == Camera.Face)
+                QueuePreviewFrame(image.Clone());
 
-            var channels = image.Channels();
-            if (channels == 1)
+            LogPreviewState("received-face", width, height, channels);
+        }
+
+        private void QueueEyePreview(Mat image)
+        {
+            Interlocked.Increment(ref _previewFramesReceived);
+            if (image == null)
             {
-                var width = image.Width;
-                var height = image.Height;
-                switch (Camera)
+                Dispatcher.UIThread.Post(ClearPreview);
+                return;
+            }
+
+            if (!IsCameraRunning)
+                return;
+
+            var (sourceWidth, sourceHeight, sourceChannels) = GetFrameInfo(image);
+            Mat? preview = null;
+
+            try
+            {
+                var inputChannels = image.Channels();
+                if (inputChannels == 1)
                 {
-                    case Camera.Left:
+                    var imageWidth = image.Width;
+                    var imageHeight = image.Height;
+                    switch (Camera)
                     {
-                        var leftHalf = new OpenCvSharp.Rect(0, 0, width / 2, height);
-                        var leftRoi = new Mat(image, leftHalf);
-
-
-                        UpdateBitmap(leftRoi);
-                        break;
-                    }
-                    case Camera.Right:
-                    {
-                        var rightHalf = new OpenCvSharp.Rect(width / 2, 0, width / 2, height);
-                        var rightRoi = new Mat(image, rightHalf);
-                        UpdateBitmap(rightRoi);
-                        break;
+                        case Camera.Left:
+                        {
+                            var leftHalf = new OpenCvSharp.Rect(0, 0, imageWidth / 2, imageHeight);
+                            using var leftRoi = new Mat(image, leftHalf);
+                            preview = leftRoi.Clone();
+                            break;
+                        }
+                        case Camera.Right:
+                        {
+                            var rightHalf = new OpenCvSharp.Rect(imageWidth / 2, 0, imageWidth / 2, imageHeight);
+                            using var rightRoi = new Mat(image, rightHalf);
+                            preview = rightRoi.Clone();
+                            break;
+                        }
                     }
                 }
-            }
-            else if (channels == 2)
-            {
-                var images = image.Split();
+                else if (inputChannels == 2)
+                {
+                    preview = new Mat();
+                    Cv2.ExtractChannel(image, preview, Camera == Camera.Left ? 0 : 1);
+                }
+                else
+                {
+                    preview = image.Clone();
+                }
 
-                if (Camera == Camera.Left)
-                    UpdateBitmap(images[0]);
-                else if (Camera == Camera.Right)
-                    UpdateBitmap(images[1]);
+                if (preview != null)
+                {
+                    QueuePreviewFrame(preview);
+                    preview = null;
+                }
+
+                LogPreviewState("received-eye", sourceWidth, sourceHeight, sourceChannels);
             }
+            finally
+            {
+                preview?.Dispose();
+            }
+        }
+
+        private void ClearPreview()
+        {
+            DisposeQueuedPreview();
+            Bitmap = null;
+            LogPreviewState("cleared", force: true);
+        }
+
+        private void QueuePreviewFrame(Mat preview)
+        {
+            if (!ShouldProcessPreview())
+            {
+                preview.Dispose();
+                return;
+            }
+
+            Mat? displacedFrame;
+            var shouldSchedule = false;
+            var (width, height, channels) = GetFrameInfo(preview);
+
+            lock (_previewFrameLock)
+            {
+                displacedFrame = _queuedPreviewFrame;
+                _queuedPreviewFrame = preview;
+                shouldSchedule = Interlocked.Exchange(ref _previewUpdateScheduled, 1) == 0;
+            }
+
+            Interlocked.Increment(ref _previewFramesQueued);
+            if (displacedFrame != null)
+                Interlocked.Increment(ref _previewFramesDropped);
+            displacedFrame?.Dispose();
+
+            if (shouldSchedule)
+                Dispatcher.UIThread.Post(ProcessQueuedPreviewFrame, DispatcherPriority.Background);
+
+            LogPreviewState("queued", width, height, channels);
+        }
+
+        private void ProcessQueuedPreviewFrame()
+        {
+            Mat? frame;
+
+            lock (_previewFrameLock)
+            {
+                frame = _queuedPreviewFrame;
+                _queuedPreviewFrame = null;
+            }
+
+            Interlocked.Exchange(ref _previewUpdateScheduled, 0);
+            if (frame == null)
+                return;
+
+            try
+            {
+                if (!IsCameraRunning || !ShouldProcessPreview())
+                    return;
+
+                var (width, height, channels) = GetFrameInfo(frame);
+                StartButtonEnabled = false;
+                StopButtonEnabled = true;
+                UpdateBitmap(frame);
+                Interlocked.Increment(ref _previewFramesRendered);
+                LogPreviewState("rendered", width, height, channels);
+            }
+            finally
+            {
+                frame.Dispose();
+            }
+        }
+
+        private void DisposeQueuedPreview()
+        {
+            Mat? queuedFrame = null;
+
+            lock (_previewFrameLock)
+            {
+                queuedFrame = _queuedPreviewFrame;
+                _queuedPreviewFrame = null;
+                Interlocked.Exchange(ref _previewUpdateScheduled, 0);
+            }
+
+            queuedFrame?.Dispose();
+        }
+
+        private bool ShouldProcessPreview()
+        {
+            if (IsCropMode)
+                return true;
+
+            if (Camera == Camera.Left || Camera == Camera.Right)
+                return false;
+
+            return Interlocked.CompareExchange(ref _previewEnabled, 0, 0) != 0;
         }
 
         void UpdateBitmap(Mat image)
         {
-            if (_bitmap is null ||
-                _bitmap.PixelSize.Width != image.Width ||
-                _bitmap.PixelSize.Height != image.Height)
+            var newBitmap = new WriteableBitmap(
+                new PixelSize(image.Width, image.Height),
+                new Vector(96, 96),
+                image.Channels() == 3 ? PixelFormats.Bgr24 : PixelFormats.Gray8,
+                AlphaFormat.Opaque);
+
+            CropManager.MaxSize.Height = newBitmap.PixelSize.Height;
+            CropManager.MaxSize.Width = newBitmap.PixelSize.Width;
+
+            Mat? continuousImage = null;
+            var copySource = image;
+            if (!image.IsContinuous())
             {
-                _bitmap = new WriteableBitmap(
-                    new PixelSize(image.Width, image.Height),
-                    new Vector(96, 96),
-                    image.Channels() == 3 ? PixelFormats.Bgr24 : PixelFormats.Gray8,
-                    AlphaFormat.Opaque);
+                continuousImage = image.Clone();
+                copySource = continuousImage;
             }
 
-            CropManager.MaxSize.Height = _bitmap.PixelSize.Height;
-            CropManager.MaxSize.Width = _bitmap.PixelSize.Width;
-
-            if (!image.IsContinuous()) image = image.Clone();
-
             // scope for "using" a lock hehe...
+            try
             {
-                using var frameBuffer = _bitmap.Lock();
+                using var frameBuffer = newBitmap.Lock();
 
-                var srcPtr = image.Data;
+                var srcPtr = copySource.Data;
                 var destPtr = frameBuffer.Address;
-                var size = image.Rows * image.Cols * image.ElemSize();
+                var size = copySource.Rows * copySource.Cols * copySource.ElemSize();
 
                 unsafe
                 {
                     Buffer.MemoryCopy(srcPtr.ToPointer(), destPtr.ToPointer(), size, size);
                 }
             }
+            finally
+            {
+                continuousImage?.Dispose();
+            }
 
+            var previousBitmap = Bitmap;
+            Bitmap = newBitmap;
+            previousBitmap?.Dispose();
             IsCameraRunning = true;
-            var tmp = Bitmap;
-            Bitmap = null;
-            Bitmap = tmp;
         }
 
         partial void OnFlipHorizontallyChanged(bool value)
@@ -370,6 +504,57 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
         {
             CropManager.SelectEntireFrame(Camera);
             OnCropUpdated();
+        }
+
+        public void Cleanup()
+        {
+            DisposeQueuedPreview();
+        }
+
+        public void SetPreviewEnabled(bool enabled)
+        {
+            Interlocked.Exchange(ref _previewEnabled, enabled ? 1 : 0);
+            if (!enabled)
+                Dispatcher.UIThread.Post(ClearPreview, DispatcherPriority.Background);
+        }
+
+        private static (int width, int height, int channels) GetFrameInfo(Mat? frame)
+        {
+            if (frame == null)
+                return (0, 0, 0);
+
+            try
+            {
+                return (frame.Width, frame.Height, frame.Channels());
+            }
+            catch
+            {
+                return (0, 0, 0);
+            }
+        }
+
+        private void LogPreviewState(string stage, int width = 0, int height = 0, int channels = 0, bool force = false)
+        {
+            var nowTick = Environment.TickCount64;
+            var lastTick = Interlocked.Read(ref _lastPreviewLogTick);
+            if (!force && nowTick - lastTick < 2000)
+                return;
+
+            Interlocked.Exchange(ref _lastPreviewLogTick, nowTick);
+            _logger.LogInformation(
+                "Preview {CameraName} {Stage}: running={Running} crop={Crop} recv={Received} queued={Queued} rendered={Rendered} dropped={Dropped} bitmap={HasBitmap} frame={Width}x{Height}x{Channels}",
+                Name,
+                stage,
+                IsCameraRunning,
+                IsCropMode,
+                Interlocked.Read(ref _previewFramesReceived),
+                Interlocked.Read(ref _previewFramesQueued),
+                Interlocked.Read(ref _previewFramesRendered),
+                Interlocked.Read(ref _previewFramesDropped),
+                Bitmap != null,
+                width != 0 ? width : Bitmap?.PixelSize.Width ?? 0,
+                height != 0 ? height : Bitmap?.PixelSize.Height ?? 0,
+                channels);
         }
     }
 
@@ -448,11 +633,11 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
         var cameras = _deviceEnumerator.UpdateCameras();
         var cameraNames = cameras.Keys.ToArray();
 
-        LeftCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, "LeftCamera",
+        LeftCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, _logger, "LeftCamera",
             cameraNames, Camera.Left);
-        RightCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, "RightCamera",
+        RightCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, _logger, "RightCamera",
             cameraNames, Camera.Right);
-        FaceCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, "FaceCamera",
+        FaceCamera = new CameraControllerModel(_localSettings, _platformConnector, _deviceEnumerator, _logger, "FaceCamera",
             cameraNames, Camera.Face);
 
         FaceCamera.PropertyChanged += CameraControllerModel_PropertyChanged;
@@ -479,8 +664,40 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
         _eyePipelineEventBus.Subscribe<EyePipelineEvents.ExceptionEvent>(EyePipelineExceptionHandler);
 
         IsInitialized = true;
+        WirePreviewVisibilityTracking();
 
         _ = TryStartCamerasAsync();
+    }
+
+    private void WirePreviewVisibilityTracking()
+    {
+        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime
+            {
+                MainWindow: { } mainWindow
+            })
+            return;
+
+        void ApplyPreviewState()
+        {
+            var enabled = mainWindow.IsVisible &&
+                          mainWindow.WindowState != WindowState.Minimized &&
+                          mainWindow.IsActive;
+
+            FaceCamera.SetPreviewEnabled(enabled);
+            LeftCamera.SetPreviewEnabled(enabled);
+            RightCamera.SetPreviewEnabled(enabled);
+        }
+
+        mainWindow.Opened += (_, _) => ApplyPreviewState();
+        mainWindow.Activated += (_, _) => ApplyPreviewState();
+        mainWindow.Deactivated += (_, _) => ApplyPreviewState();
+        mainWindow.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == Avalonia.Controls.Window.WindowStateProperty || args.Property == Visual.IsVisibleProperty)
+                ApplyPreviewState();
+        };
+
+        ApplyPreviewState();
     }
 
     private void CameraControllerModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -528,24 +745,30 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
 
     private void EyePipelineExceptionHandler(EyePipelineEvents.ExceptionEvent e)
     {
-        LeftCamera.StartButtonEnabled = true;
-        LeftCamera.StopButtonEnabled = false;
-        LeftCamera.Bitmap = null;
-        LeftCamera.IsCameraRunning = false;
+        Dispatcher.UIThread.Post(() =>
+        {
+            LeftCamera.StartButtonEnabled = true;
+            LeftCamera.StopButtonEnabled = false;
+            LeftCamera.Bitmap = null;
+            LeftCamera.IsCameraRunning = false;
 
-        RightCamera.StartButtonEnabled = true;
-        RightCamera.StopButtonEnabled = false;
-        RightCamera.Bitmap = null;
-        RightCamera.IsCameraRunning = false;
+            RightCamera.StartButtonEnabled = true;
+            RightCamera.StopButtonEnabled = false;
+            RightCamera.Bitmap = null;
+            RightCamera.IsCameraRunning = false;
+        });
     }
 
     private void FacePipelineExceptionHandler(FacePipelineEvents.ExceptionEvent e)
     {
-        FaceCamera.StartButtonEnabled = true;
-        FaceCamera.StopButtonEnabled = false;
+        Dispatcher.UIThread.Post(() =>
+        {
+            FaceCamera.StartButtonEnabled = true;
+            FaceCamera.StopButtonEnabled = false;
 
-        FaceCamera.Bitmap = null;
-        FaceCamera.IsCameraRunning = false;
+            FaceCamera.Bitmap = null;
+            FaceCamera.IsCameraRunning = false;
+        });
     }
 
     [RelayCommand]
@@ -642,7 +865,10 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
                 // 1) This call originates from the UI, IE a user has requested it
                 // 2) The current camera differs from the previous (IE, an existing connection was interrupted)
                 var lastOpenedCameraName = _localSettings.ReadSetting<string>("LastOpened" + model.Name);
-                if (startMaximized && lastOpenedCameraName != model.DisplayAddress)
+                if (startMaximized &&
+                    lastOpenedCameraName != model.DisplayAddress &&
+                    model.CropManager.MaxSize.Width > 0 &&
+                    model.CropManager.MaxSize.Height > 0)
                 {
                     model.SelectWholeFrame();
                 }
@@ -756,9 +982,17 @@ public partial class HomePageViewModel : ViewModelBase, IDisposable
     private void CleanupResources()
     {
         if (_disposed) return;
+        _disposed = true;
         FaceCamera.CamViewMode = CamViewMode.Tracking;
         LeftCamera.CamViewMode = CamViewMode.Tracking;
         RightCamera.CamViewMode = CamViewMode.Tracking;
+        FaceCamera.Cleanup();
+        LeftCamera.Cleanup();
+        RightCamera.Cleanup();
+
+        FaceCamera.PropertyChanged -= CameraControllerModel_PropertyChanged;
+        LeftCamera.PropertyChanged -= CameraControllerModel_PropertyChanged;
+        RightCamera.PropertyChanged -= CameraControllerModel_PropertyChanged;
 
         _facePipelineEventBus.Unsubscribe<FacePipelineEvents.NewFrameEvent>(FaceCamera.FaceNewImageUpdateEventHandler);
         _facePipelineEventBus.Unsubscribe<FacePipelineEvents.NewTransformedFrameEvent>(FaceCamera

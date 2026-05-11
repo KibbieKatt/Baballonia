@@ -78,7 +78,15 @@ public abstract class PositionalAwareCaptureStep(string name, uint flags, TimeSp
             return;
 
         var images = frame.image.Split();
-        PositionalBinCollector.AddFrame(images[1], images[0]);
+        try
+        {
+            PositionalBinCollector.AddFrame(images[1], images[0]);
+        }
+        finally
+        {
+            foreach (var image in images)
+                image.Dispose();
+        }
     }
 
     protected void StartCollecting()
@@ -125,7 +133,15 @@ public abstract class BaseCaptureStep(string name, uint flags, TimeSpan time) : 
             return;
 
         var images = frame.image.Split();
-        AddFrame(images);
+        try
+        {
+            AddFrame(images);
+        }
+        finally
+        {
+            foreach (var image in images)
+                image.Dispose();
+        }
     }
 
     public virtual Frame AddFrame(Mat[] images)
@@ -188,14 +204,22 @@ public class GazeCaptureStep(IEyePipelineEventBus bus, TimeSpan time) : BasePosi
         if (_posDataTimer.Elapsed <= _posDataTimeout)
         {
             var images = frame.image.Split();
-            var f = PositionalBinCollector.AddFrame(images[1], images[0]);
-            if (f is not null)
+            try
             {
-                f.Header = f.Header with
+                var f = PositionalBinCollector.AddFrame(images[1], images[0]);
+                if (f is not null)
                 {
-                    RoutineLeftLid = 1,
-                    RoutineRightLid = 1,
-                };
+                    f.Header = f.Header with
+                    {
+                        RoutineLeftLid = 1,
+                        RoutineRightLid = 1,
+                    };
+                }
+            }
+            finally
+            {
+                foreach (var image in images)
+                    image.Dispose();
             }
         }
     }

@@ -12,6 +12,9 @@ namespace Baballonia;
 
 public static class Utils
 {
+    private const string AppDataRootEnvVar = "BABALLONIA_APPDATA_ROOT";
+    private const string DocumentsRootEnvVar = "BABALLONIA_DOCUMENTS_ROOT";
+    private const string VrcftLibsDirEnvVar = "BABALLONIA_VRCFT_LIBS_DIR";
     public const int EyeRawExpressions = 6;
     public const int FaceRawExpressions = 45;
     public const int FramesForEyeInference = 4;
@@ -49,23 +52,34 @@ public static class Utils
 
     public static readonly bool HasAdmin = OperatingSystem.IsWindows() && new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
-    public static readonly string UserAccessibleDataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ProjectBabble");
+    private static readonly string? PersistentDataDirectoryOverride = GetOverridePath(AppDataRootEnvVar);
+    private static readonly string? UserAccessibleDataDirectoryOverride = GetOverridePath(DocumentsRootEnvVar);
+    private static readonly string? VrcftLibsDirectoryOverride = GetOverridePath(VrcftLibsDirEnvVar);
+
+    public static readonly string UserAccessibleDataDirectory = UserAccessibleDataDirectoryOverride ??
+                                                               Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ProjectBabble");
 
     public static readonly string PersistentDataDirectory = IsSupportedDesktopOS
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjectBabble")
+        ? PersistentDataDirectoryOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjectBabble")
         : AppContext.BaseDirectory;
 
     public static readonly string ModelsDirectory = IsSupportedDesktopOS
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjectBabble", "Models")
+        ? Path.Combine(PersistentDataDirectory, "Models")
         : AppContext.BaseDirectory;
 
     public static readonly string ModelDataDirectory = IsSupportedDesktopOS
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjectBabble", "ModelData")
+        ? Path.Combine(PersistentDataDirectory, "ModelData")
         : AppContext.BaseDirectory;
 
-    public static readonly string VrcftLibsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    public static readonly string VrcftLibsDirectory = VrcftLibsDirectoryOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "VRCFaceTracking",
         "CustomLibs");
+
+    private static string? GetOverridePath(string variableName)
+    {
+        var overridePath = Environment.GetEnvironmentVariable(variableName);
+        return string.IsNullOrWhiteSpace(overridePath) ? null : overridePath;
+    }
 
     public static void ExtractEmbeddedResource(Assembly assembly, string resourceName, string file, bool overwrite = false)
     {

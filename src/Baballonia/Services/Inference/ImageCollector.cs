@@ -1,48 +1,87 @@
-﻿using OpenCvSharp;
-using System.Collections.Generic;
-using System.Linq;
+using OpenCvSharp;
+using System;
 
 namespace Baballonia.Services.Inference;
 
-public class ImageCollector : IImageTransformer
+public class ImageCollector : IImageTransformer, IDisposable
 {
-    private Queue<Mat> ImageQueue = new();
+    private readonly Mat?[] _history = new Mat[4];
+    private readonly Mat[] _stereoChannels = new Mat[2];
+    private readonly Mat[] _octoChannels = new Mat[8];
+    private int _historyHead;
+    private int _historyCount;
+
     public Mat? Apply(Mat image)
     {
-        Mat[] split = image.Split();
-        foreach (var mat in split)
+        Mat[] split = Cv2.Split(image);
+        Mat? merged = null;
+        try
         {
-            Cv2.EqualizeHist(mat, mat);
+            foreach (var mat in split)
+                Cv2.EqualizeHist(mat, mat);
+
+            merged = new Mat();
+            _stereoChannels[0] = split[1];
+            _stereoChannels[1] = split[0];
+            Cv2.Merge(_stereoChannels, merged);
+        }
+        finally
+        {
+            foreach (var mat in split)
+                mat.Dispose();
         }
 
-        Mat merged = new Mat();
-        // swap left and right because inference requires them in that way
-        Cv2.Merge(split.Reverse().ToArray(), merged);
-
-        ImageQueue.Enqueue(merged);
-
-        if (ImageQueue.Count < 5)
+        PushFrame(merged);
+        if (_historyCount < _history.Length)
             return null;
 
-        var removed = ImageQueue.Dequeue();
-        removed.Dispose();
-
-        // feed the most recent matrix here at the start
-        var last4 = ImageQueue.Skip(ImageQueue.Count - 4).Take(4).Reverse().ToArray();
-
-        var channels = new List<Mat>();
-        foreach (var m in last4)
+        try
         {
-            Mat[] splitChannels = Cv2.Split(m);
-            channels.AddRange(splitChannels);
+            var channelIndex = 0;
+            for (var historyOffset = 0; historyOffset < _history.Length; historyOffset++)
+            {
+                var frameIndex = (_historyHead + _historyCount - 1 - historyOffset + _history.Length) % _history.Length;
+                var frame = _history[frameIndex]!;
+                var splitChannels = Cv2.Split(frame);
+                _octoChannels[channelIndex++] = splitChannels[0];
+                _octoChannels[channelIndex++] = splitChannels[1];
+            }
+
+            var octoMatrix = new Mat();
+            Cv2.Merge(_octoChannels, octoMatrix);
+            return octoMatrix;
+        }
+        finally
+        {
+            for (var i = 0; i < _octoChannels.Length; i++)
+            {
+                _octoChannels[i]?.Dispose();
+                _octoChannels[i] = null!;
+            }
+        }
+    }
+
+    private void PushFrame(Mat frame)
+    {
+        if (_historyCount < _history.Length)
+        {
+            var insertIndex = (_historyHead + _historyCount) % _history.Length;
+            _history[insertIndex] = frame;
+            _historyCount++;
+            return;
         }
 
-        Mat octoMatrix = new Mat();
-        Cv2.Merge(channels.ToArray(), octoMatrix);
+        _history[_historyHead]?.Dispose();
+        _history[_historyHead] = frame;
+        _historyHead = (_historyHead + 1) % _history.Length;
+    }
 
-        foreach (var channel in channels)
-            channel.Dispose();
-
-        return octoMatrix;
+    public void Dispose()
+    {
+        for (var i = 0; i < _history.Length; i++)
+        {
+            _history[i]?.Dispose();
+            _history[i] = null;
+        }
     }
 }
